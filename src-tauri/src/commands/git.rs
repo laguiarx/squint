@@ -160,52 +160,64 @@ fn apply_numstat(files: &mut [ChangedFile], numstat: &str, staged: bool) {
 }
 
 #[tauri::command]
-pub fn git_file_diff(
+pub async fn git_file_diff(
     repo_path: String,
     file_path: String,
     staged: bool,
 ) -> AppResult<DiffResult> {
+    // Async + spawn_blocking: this command does 3–4 sequential `git`
+    // subprocess spawns (~5-30ms each on macOS). Before this it was a
+    // plain `pub fn`, so every ⌥↓ navigation queued behind the previous
+    // diff fetch on the same Tauri runtime thread — even sidebar list
+    // refreshes felt jittery. Now it runs on the blocking pool and the
+    // IPC channel stays free for everything else.
     let repo = resolve_repo(&repo_path)?;
+    tokio::task::spawn_blocking(move || {
+        // Determine status to know whether the file is untracked.
+        let porcelain = run_git_string(
+            &repo,
+            &["status", "--porcelain=v1", "--", &file_path],
+        )?;
+        let untracked = porcelain.starts_with("??");
 
-    // Determine status to know whether the file is untracked
-    let porcelain = run_git_string(
-        &repo,
-        &["status", "--porcelain=v1", "--", &file_path],
-    )?;
-    let untracked = porcelain.starts_with("??");
+        let is_binary = file_is_binary(&repo, &file_path, staged, untracked)?;
 
-    let is_binary = file_is_binary(&repo, &file_path, staged, untracked)?;
+        let diff_args: Vec<&str> = if untracked {
+            vec!["diff", "--no-index", "--", "/dev/null", &file_path]
+        } else if staged {
+            vec!["diff", "--cached", "--", &file_path]
+        } else {
+            vec!["diff", "--", &file_path]
+        };
+        // git diff --no-index returns a non-zero exit on differences,
+        // which would be misread as a failure. Handle untracked
+        // separately via raw command.
+        let diff_text = if untracked {
+            run_git_allow_nonzero(&repo, &diff_args)?
+        } else {
+            run_git_string(&repo, &diff_args).unwrap_or_default()
+        };
 
-    let diff_args: Vec<&str> = if untracked {
-        vec!["diff", "--no-index", "--", "/dev/null", &file_path]
-    } else if staged {
-        vec!["diff", "--cached", "--", &file_path]
-    } else {
-        vec!["diff", "--", &file_path]
-    };
-    // git diff --no-index returns a non-zero exit on differences, which would
-    // be misread as a failure. Handle untracked separately via raw command.
-    let diff_text = if untracked {
-        run_git_allow_nonzero(&repo, &diff_args)?
-    } else {
-        run_git_string(&repo, &diff_args).unwrap_or_default()
-    };
+        let (old_content, new_content) = if is_binary {
+            (String::new(), String::new())
+        } else {
+            let new_content =
+                read_new_content(&repo, &file_path, staged, untracked)?;
+            let old_content =
+                read_old_content(&repo, &file_path, staged, untracked)?;
+            (old_content, new_content)
+        };
 
-    let (old_content, new_content) = if is_binary {
-        (String::new(), String::new())
-    } else {
-        let new_content = read_new_content(&repo, &file_path, staged, untracked)?;
-        let old_content = read_old_content(&repo, &file_path, staged, untracked)?;
-        (old_content, new_content)
-    };
-
-    Ok(DiffResult {
-        file_path,
-        old_content,
-        new_content,
-        diff_text,
-        is_binary,
+        Ok(DiffResult {
+            file_path,
+            old_content,
+            new_content,
+            diff_text,
+            is_binary,
+        })
     })
+    .await
+    .map_err(|e| AppError::msg(format!("diff task panicked: {e}")))?
 }
 
 fn run_git_allow_nonzero(repo: &Path, args: &[&str]) -> AppResult<String> {
@@ -1097,24 +1109,31 @@ pub fn list_repo_files(repo_path: String) -> AppResult<Vec<String>> {
 }
 
 #[tauri::command]
-pub fn read_working_file(repo_path: String, file_path: String) -> AppResult<String> {
+pub async fn read_working_file(
+    repo_path: String,
+    file_path: String,
+) -> AppResult<String> {
     let repo = resolve_repo(&repo_path)?;
     let full = confine_to_repo(&repo, &file_path)?;
-    if !full.exists() {
-        // Surface the missing-file case as an error instead of silently
-        // returning empty — otherwise the editor would render as blank
-        // and the user would think text was hidden by a color override.
-        return Err(AppError::msg(format!(
-            "File not found on disk: {} (resolved to {})",
-            file_path,
-            full.display()
-        )));
-    }
-    let bytes = std::fs::read(&full).map_err(AppError::Io)?;
-    if looks_binary(&bytes) {
-        return Err(AppError::msg("Cannot edit a binary file"));
-    }
-    Ok(String::from_utf8_lossy(&bytes).to_string())
+    // Async + spawn_blocking: file IO is blocking. Same rationale as
+    // git_file_diff — keeps the Tauri runtime free for parallel calls
+    // (the editor often reads while the diff is also being fetched).
+    tokio::task::spawn_blocking(move || {
+        if !full.exists() {
+            return Err(AppError::msg(format!(
+                "File not found on disk: {} (resolved to {})",
+                file_path,
+                full.display()
+            )));
+        }
+        let bytes = std::fs::read(&full).map_err(AppError::Io)?;
+        if looks_binary(&bytes) {
+            return Err(AppError::msg("Cannot edit a binary file"));
+        }
+        Ok(String::from_utf8_lossy(&bytes).to_string())
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("read task panicked: {e}")))?
 }
 
 /// Two-sided binary preview (typically for images). `oldDataUrl` reflects

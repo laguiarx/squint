@@ -1004,6 +1004,11 @@ export const useRepoStore = create<State>((set, get) => ({
   refresh: async () => {
     const repo = get().repository;
     if (!repo) return;
+    // The working tree may have changed (commit / pull / stash / external
+    // edit) so the per-file diff cache is now stale. Cheaper to drop it
+    // wholesale than to track per-key invalidation — the cache repopulates
+    // as the user navigates.
+    gitApi.clearDiffCache();
     set({ loading: true, errorMessage: null });
     try {
       const [rawFiles, currentBranch] = await Promise.all([
@@ -1179,6 +1184,16 @@ export const useRepoStore = create<State>((set, get) => ({
         : (idx + direction + visible.length) % visible.length;
     const next = visible[nextIdx];
     set({ selectedFilePath: next.path, selectedFileStaged: next.staged });
+
+    // Prefetch the file the user is most likely to navigate to next so
+    // it's already in cache by the time they hit ⌥↓ / ⌥↑ again. The cost
+    // is one extra background `git diff` that runs in parallel on the
+    // Rust blocking pool (doesn't block the foreground fetch).
+    const repoPath = state.repository.path;
+    const peek = visible[(nextIdx + direction + visible.length) % visible.length];
+    if (peek && (peek.path !== next.path || peek.staged !== next.staged)) {
+      gitApi.prefetchFileDiff(repoPath, peek.path, peek.staged);
+    }
   },
 
   setFilterText: (filterText) => set({ filterText }),

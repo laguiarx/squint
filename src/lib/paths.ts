@@ -19,20 +19,12 @@ export type DiffExpansion = "full" | "hunks";
 
 export type SearchView = "list" | "tree";
 
-/**
- * Caret style inside the in-app editor. `block` = wider block-shaped
- * caret (terminal-like, default). `blink` = the standard thin bar that
- * the OS blinks at its configured rate.
- */
-export type EditorCursor = "block" | "blink";
-
 export type Settings = {
   theme: Theme;
   density: Density;
   autoOpenLast: boolean;
   diffExpansion: DiffExpansion;
   searchView: SearchView;
-  editorCursor: EditorCursor;
   leftSidebarVisible: boolean;
   rightSidebarVisible: boolean;
   leftSidebarWidth: number;
@@ -78,7 +70,6 @@ const DEFAULT_SETTINGS: Settings = {
   autoOpenLast: true,
   diffExpansion: "full",
   searchView: "list",
-  editorCursor: "block",
   leftSidebarVisible: true,
   rightSidebarVisible: true,
   leftSidebarWidth: 280,
@@ -223,7 +214,6 @@ export function readSettings(): Settings {
       autoOpenLast: typeof parsed.autoOpenLast === "boolean" ? parsed.autoOpenLast : true,
       diffExpansion: parsed.diffExpansion === "hunks" ? "hunks" : "full",
       searchView: parsed.searchView === "tree" ? "tree" : "list",
-      editorCursor: parsed.editorCursor === "blink" ? "blink" : "block",
       leftSidebarVisible:
         typeof parsed.leftSidebarVisible === "boolean"
           ? parsed.leftSidebarVisible

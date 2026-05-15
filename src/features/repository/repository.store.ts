@@ -27,7 +27,6 @@ import {
   writeSettings,
   type Density,
   type DiffExpansion,
-  type EditorCursor,
   type RecentRepo,
   type SearchView,
   type Settings,
@@ -228,7 +227,6 @@ type State = {
   setAutoOpenLast: (value: boolean) => void;
   setDiffExpansion: (value: DiffExpansion) => void;
   setSearchView: (value: SearchView) => void;
-  setEditorCursor: (value: EditorCursor) => void;
   setUiFont: (value: FontPreset, custom?: string) => void;
   setCodeFont: (value: MonoPreset, custom?: string) => void;
   setCustomColor: (key: string, value: string | null) => void;
@@ -720,15 +718,6 @@ export const useRepoStore = create<State>((set, get) => ({
       return { settings: next };
     });
   },
-  setEditorCursor: (editorCursor) => {
-    set((s) => {
-      const next = { ...s.settings, editorCursor };
-      writeSettings(next);
-      // Drive the CSS via a data attribute so the rule lives in index.css.
-      document.documentElement.setAttribute("data-editor-cursor", editorCursor);
-      return { settings: next };
-    });
-  },
   setUiFont: (uiFont, custom) => {
     set((s) => {
       const customUiFont = custom ?? s.settings.customUiFont;
@@ -779,10 +768,12 @@ export const useRepoStore = create<State>((set, get) => ({
   generateBranchName: async () => {
     const state = get();
     if (!state.repository) return null;
-    const cliId = state.settings.preferredAiCli;
-    const cli = cliId
-      ? state.aiCliList.find((c) => c.id === cliId && c.available)
-      : null;
+    // Same lazy-detect + fallback the commit composer and the modal use.
+    // Used to do its own `aiCliList.find()` and barf "No AI CLI detected"
+    // when the user had never opened the GitMenu yet (which is what used
+    // to trigger detection) or had a stale preference pointing at an
+    // uninstalled CLI.
+    const cli = await resolveAvailableCli(get, set);
     if (!cli) {
       state.pushToast(
         "No AI CLI detected. Set one in Preferences → AI.",
@@ -1813,6 +1804,18 @@ export const useRepoStore = create<State>((set, get) => ({
       // 2) Resolve the base branch (PR target).
       setStep("Resolving default branch…");
       const baseBranch = await gitApi.defaultBranch(repoPath);
+
+      // Pre-flight: refuse to even try when head == base. `gh pr create`
+      // errors out late ("head branch 'main' is the same as base branch
+      // 'main'") and by then we've already done useless work.
+      const currentBranch = get().repository?.currentBranch ?? "";
+      const headBranch = newBranchName?.trim() || currentBranch;
+      if (headBranch === baseBranch) {
+        fail(
+          `You're on the default branch '${baseBranch}'. Pick "Create new branch" in the dialog so the PR has somewhere to merge from.`,
+        );
+        return;
+      }
 
       // 3) Optionally create + checkout a new branch.
       if (newBranchName) {

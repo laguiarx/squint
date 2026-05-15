@@ -77,10 +77,6 @@ export function App() {
     applySansFont(settings.uiFont, settings.customUiFont);
     applyMonoFont(settings.codeFont, settings.customCodeFont);
     applyCustomColors(settings.customColors);
-    document.documentElement.setAttribute(
-      "data-editor-cursor",
-      settings.editorCursor,
-    );
   }, [
     settings.theme,
     settings.density,
@@ -89,7 +85,6 @@ export function App() {
     settings.customUiFont,
     settings.customCodeFont,
     settings.customColors,
-    settings.editorCursor,
   ]);
 
   // Show the welcome tour on first launch.

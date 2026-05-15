@@ -939,7 +939,65 @@ textarea::placeholder {
   background: var(--bd-0);
 }
 
-/* PR branch-choice dialog (radio group + optional name input). */
+/* Branch-choice card — portal-mounted, anchored to the Git pill (same
+   positioning as PrFlowDialog). */
+.pr-branch-popover {
+  position: fixed;
+  z-index: 9999;
+  width: min(420px, 92vw);
+  background: color-mix(in oklab, var(--bg-1) 96%, transparent);
+  border: 1px solid var(--bd-2);
+  border-radius: var(--radius-3);
+  display: flex;
+  flex-direction: column;
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.5),
+    0 0 0 0.5px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  overflow: hidden;
+}
+.pr-branch-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--bd-0);
+  background: var(--bg-2);
+}
+.pr-branch-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.pr-branch-close {
+  background: transparent;
+  border: 0;
+  color: var(--fg-3);
+  cursor: pointer;
+  padding: 2px;
+}
+.pr-branch-close:hover {
+  color: var(--fg-0);
+}
+.pr-branch-body {
+  padding: 14px 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pr-branch-sub {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.pr-branch-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/* Radio group + optional name input inside the branch-choice card. */
 .pr-branch-choice {
   display: flex;
   flex-direction: column;
@@ -1015,15 +1073,24 @@ textarea::placeholder {
   cursor: not-allowed;
 }
 
-/* PR-flow progress modal (running spinner / success / error states). */
-.pr-flow-dialog {
-  width: min(560px, 92vw);
-  background: var(--bg-1);
+/* PR-flow progress card. Portal-mounted (position: fixed) anchored to
+   the Git pill in the topbar via inline `top` / `right`. NO backdrop
+   overlay — the card sits over the workspace, the user can keep
+   reading/scrolling while gh runs. */
+.pr-flow-popover {
+  position: fixed;
+  z-index: 9999;
+  width: min(420px, 92vw);
+  background: color-mix(in oklab, var(--bg-1) 96%, transparent);
   border: 1px solid var(--bd-2);
   border-radius: var(--radius-3);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.5),
+    0 0 0 0.5px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
   overflow: hidden;
 }
 .pr-flow-head {
@@ -3835,73 +3902,73 @@ textarea::placeholder {
   border-radius: 5px;
   border: 2px solid var(--bg-0);
 }
+/* Single-block editor. Two children:
+     - .editor-gutter  → <pre> with line numbers, one per line
+     - .editor-content → <pre> overlay + <textarea> on top, both single
+                         block elements with identical line metrics.
+
+   The whole point: by making the overlay and textarea SINGLE elements
+   (not one per line) the browser computes one line metric for each and
+   renders them at identical y positions. Per-row divs accumulated
+   subpixel rounding drift that bumped the caret half a line off after
+   ~10 lines.
+
+   `--editor-line-h` is the shared line height (px, not unitless) so the
+   gutter font-size can stay smaller (11px) without changing line height. */
+:root {
+  --editor-line-h: 19px;
+}
 .editor-grid {
   position: relative;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 48px 1fr;
   min-height: 100%;
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.55;
+  line-height: var(--editor-line-h);
   tab-size: 2;
 }
-.editor-row {
-  display: grid;
-  grid-template-columns: 48px 1fr;
-  align-items: stretch;
-  min-height: 1.55em;
-}
-.editor-gutter-line {
-  position: relative;
+.editor-gutter {
+  margin: 0;
   padding: 0 6px;
-  text-align: right;
-  color: var(--fg-3);
   background: var(--bg-1);
   border-right: 1px solid var(--bd-0);
+  color: var(--fg-3);
+  text-align: right;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: var(--editor-line-h);
+  white-space: pre;
   user-select: none;
   font-variant-numeric: tabular-nums;
-  font-size: 11px;
-  line-height: 1.55;
+  /* Same feature normalisation as the overlay/textarea — see comment on
+     .editor-textarea. */
+  font-feature-settings: normal;
+  font-variant-ligatures: none;
 }
-.editor-gutter-line > span {
-  display: inline-block;
-  line-height: 1.55;
-}
-.editor-gutter-line.is-changed {
+.editor-gutter-num.is-changed {
   color: var(--git-mod);
+  font-weight: 600;
 }
-.editor-gutter-line.is-changed::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--git-mod);
+.editor-content {
+  position: relative;
 }
-.editor-overlay-line {
+.editor-overlay {
+  margin: 0;
   padding: 0 14px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: var(--editor-line-h);
+  white-space: pre;
   /* Hard-coded #e0e0e0 fallback so that even if --fg-0 is empty/invalid
      (e.g. a broken custom-color override), the editor text never blends
-     into the dark background and disappears. The user can still customize
-     via the Custom Colors picker. */
+     into the dark background and disappears. */
   color: var(--fg-0, #e0e0e0);
   background: var(--bg-0);
   pointer-events: none;
-  line-height: 1.55;
-  /* Guarantee every row's overlay cell is exactly one line-box tall even
-     when the source line is empty. Without this, empty lines collapsed to
-     ~0px → the textarea's caret stayed at line N but the visible text
-     shifted up because the overlay row above shrunk. */
-  min-height: 1.55em;
-  /* Disable JetBrains Mono's contextual alternates / stylistic sets that
-     `body` enables. The `<textarea>` doesn't apply them (browser-rendered
-     input fields ignore most font-feature-settings), so leaving them on
-     in the overlay would make glyph widths drift between the visible
-     text and the textarea — wrapping points diverge → caret position
-     diverges. Forcing `normal` on both keeps them in lock-step. */
+  /* Match the textarea — JetBrains Mono's stylistic sets (cv11/ss01/cv01)
+     render slightly different glyphs in spans vs. native form inputs;
+     leaving them on would drift glyph widths between the two layers. */
   font-feature-settings: normal;
   font-variant-ligatures: none;
 }
@@ -3945,18 +4012,18 @@ textarea::placeholder {
    (which is `position: relative`). It is no longer a grid item — that
    used to crowd out the gutter/overlay cells via auto-placement. */
 .editor-textarea {
+  /* `.editor-content` is `position: relative`; this fills its content
+     box, covering the overlay <pre> pixel-for-pixel. Identical font /
+     font-size / line-height to the overlay means the caret lands on the
+     same y as the visible glyph for every line. */
   position: absolute;
-  top: 0;
-  left: 48px; /* aligns with end of gutter column */
-  right: 0;
-  bottom: 0;
+  inset: 0;
   margin: 0;
   padding: 0 14px;
   font-family: var(--font-mono);
   font-size: 12px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
+  line-height: var(--editor-line-h);
+  white-space: pre;
   tab-size: 2;
   border: 0;
   outline: none;
@@ -3966,22 +4033,8 @@ textarea::placeholder {
   color: transparent;
   -webkit-text-fill-color: transparent;
   caret-color: var(--accent);
-  /* Match the overlay — see the comment on `.editor-overlay-line`. Both
-     sides must render with identical glyph widths or the caret drifts
-     away from where the actual character lands. */
   font-feature-settings: normal;
   font-variant-ligatures: none;
-}
-/* Caret style — driven by the user's Preferences pick.
-   - "block" (default): wider, terminal-style caret via `caret-shape: block`.
-     Supported in WebKit (Tauri uses WKWebView on macOS).
-   - "blink": the standard thin bar; the OS controls the actual blink rate
-     (System Settings → Keyboard → "Cursor blinking"). */
-:root[data-editor-cursor="block"] .editor-textarea {
-  caret-shape: block;
-}
-:root[data-editor-cursor="blink"] .editor-textarea {
-  caret-shape: bar;
 }
 .editor-textarea::selection {
   background: var(--accent-soft);

@@ -1,14 +1,26 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRepoStore } from "@/features/repository/repository.store";
-import { Overlay } from "./Overlay";
 import { I } from "./Icons";
 
+type Anchor = { top: number; right: number };
+
+function computeAnchor(): Anchor {
+  const trigger = document.querySelector<HTMLElement>("[data-git-menu-trigger]");
+  if (!trigger) return { top: 60, right: 16 };
+  const rect = trigger.getBoundingClientRect();
+  return {
+    top: rect.bottom + 6,
+    right: Math.max(8, window.innerWidth - rect.right),
+  };
+}
+
 /**
- * Dialog shown before the `createPr` orchestrator fires. Lets the user
- * pick between:
- *   - "Use current branch" — commit/push/PR on whatever they're on
- *   - "Create new branch"  — name the branch (or let AI suggest one),
- *                            create it, then run the rest of the flow
+ * Branch-choice card shown before `createPr` fires. Portal-mounted and
+ * anchored to the Git pill in the topbar — same pattern as `GitMenu` and
+ * `PrFlowDialog`, so the whole "Create PR" interaction feels like one
+ * conversation cascading out of the Git button instead of three
+ * unrelated full-screen modals.
  */
 export function PrBranchChoiceDialog() {
   const open = useRepoStore((s) => s.prBranchChoiceOpen);
@@ -21,12 +33,28 @@ export function PrBranchChoiceDialog() {
   const [newName, setNewName] = useState("");
   const [generating, setGenerating] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
 
-  // Reset on each open.
+  const [anchor, setAnchor] = useState<Anchor>({ top: 60, right: 16 });
+
+  // Reset state on each open.
   useEffect(() => {
     if (!open) return;
     setMode("current");
     setNewName("");
+  }, [open]);
+
+  // Anchor to the Git pill + keep in sync on resize/scroll.
+  useLayoutEffect(() => {
+    if (!open) return;
+    setAnchor(computeAnchor());
+    const onResize = () => setAnchor(computeAnchor());
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onResize, true);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onResize, true);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -34,6 +62,28 @@ export function PrBranchChoiceDialog() {
       requestAnimationFrame(() => inputRef.current?.focus());
     }
   }, [open, mode]);
+
+  // Escape closes; click outside (but not on the Git trigger) closes too.
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      const t = e.target as Node | null;
+      if (cardRef.current && t && !cardRef.current.contains(t)) {
+        const trigger = document.querySelector("[data-git-menu-trigger]");
+        if (trigger && trigger.contains(t)) return;
+        closeDialog();
+      }
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") closeDialog();
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open, closeDialog]);
 
   if (!open) return null;
 
@@ -46,11 +96,29 @@ export function PrBranchChoiceDialog() {
     });
   };
 
-  return (
-    <Overlay onClose={closeDialog} centered>
-      <div className="confirm-card" style={{ width: "min(480px, 92vw)" }}>
-        <div className="confirm-title">Create Pull Request</div>
-        <div className="confirm-body dim">
+  return createPortal(
+    <div
+      className="pr-branch-popover"
+      ref={cardRef}
+      style={{ top: anchor.top, right: anchor.right }}
+      role="dialog"
+      aria-label="Create Pull Request"
+    >
+      <div className="pr-branch-head">
+        <span className="pr-branch-eyebrow mono dim">Git · Create PR</span>
+        <span className="flex-spacer" />
+        <button
+          className="pr-branch-close"
+          onClick={closeDialog}
+          type="button"
+          title="Close"
+        >
+          {I.x}
+        </button>
+      </div>
+
+      <div className="pr-branch-body">
+        <div className="pr-branch-sub dim">
           Currently on{" "}
           <span className="mono">
             {repository?.currentBranch ?? "(no branch)"}
@@ -132,7 +200,7 @@ export function PrBranchChoiceDialog() {
           ) : null}
         </div>
 
-        <div className="confirm-actions">
+        <div className="pr-branch-actions">
           <button className="ghost-btn" onClick={closeDialog} type="button">
             Cancel
           </button>
@@ -146,6 +214,7 @@ export function PrBranchChoiceDialog() {
           </button>
         </div>
       </div>
-    </Overlay>
+    </div>,
+    document.body,
   );
 }

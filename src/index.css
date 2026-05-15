@@ -2175,6 +2175,11 @@ textarea::placeholder {
   padding: 4px 0 12px;
   scrollbar-width: thin;
   scrollbar-color: var(--bd-2) transparent;
+  /* Belt + suspenders against the shift-click text-flash: even if a
+     prior selection latched on outside the list, no text inside this
+     container is selectable, so the visual "extend" can't render. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Commit composer pinned to the bottom of the Changes tab. */

@@ -70,6 +70,14 @@ export function FileRow({
         !selected && !multiSelected && active && "is-active",
         file.reviewed && "is-reviewed",
       )}
+      onMouseDown={(e) => {
+        // Shift-click starts text selection on `mousedown` — long before
+        // our `click` handler can call `removeAllRanges()`. That's the
+        // flash the user sees. Suppress it at the source: when the
+        // modifier is held, the row is acting as a range-select trigger,
+        // not as a text cursor.
+        if (e.shiftKey) e.preventDefault();
+      }}
       onClick={onSelect}
     >
       <span

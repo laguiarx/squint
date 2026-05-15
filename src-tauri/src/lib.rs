@@ -42,6 +42,7 @@ pub fn run() {
             commands::gh::gh_detect_status,
             commands::gh::gh_pr_create,
             commands::git::list_branches,
+            commands::git::git_delete_branch,
             commands::git::checkout_branch,
             commands::git::create_branch,
             commands::git::list_repo_files,

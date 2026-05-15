@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { TopBar } from "@/components/TopBar";
 import { Sidebar } from "@/components/Sidebar";
 import { DiffPane } from "@/components/DiffPane";
@@ -127,6 +127,41 @@ export function App() {
     // Only on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Recovery path for the case where `repository` drops to null AFTER
+  // mount — primarily happens during dev when Vite HMR resets the
+  // Zustand store mid-session (e.g. user is dogfooding the app on its
+  // own repo, switches branches, source files change, HMR fires, store
+  // is reborn empty). Without this, the user would land on the
+  // NoRepoState picker and have to manually reopen.
+  //
+  // Guarded by a ref so a failing `openRepositoryFromPath` doesn't
+  // ping-pong us forever — we try ONCE per "lost the repo" event, and
+  // the flag is reset when the repository comes back.
+  const recoveryAttempted = useRef(false);
+  useEffect(() => {
+    if (repository) {
+      recoveryAttempted.current = false;
+      return;
+    }
+    if (bootstrapping) return;
+    if (recoveryAttempted.current) return;
+    if (!settings.autoOpenLast || !isTauri()) return;
+    const last = getLastRepoPath();
+    if (!last) return;
+    recoveryAttempted.current = true;
+    setBootstrapping(true);
+    openRepositoryFromPath(last)
+      .catch(() => {
+        /* keep the user on NoRepoState — error is in the store */
+      })
+      .finally(() => setBootstrapping(false));
+  }, [
+    repository,
+    bootstrapping,
+    settings.autoOpenLast,
+    openRepositoryFromPath,
+  ]);
 
   // Build command palette items
   const files = useRepoStore((s) => s.files);

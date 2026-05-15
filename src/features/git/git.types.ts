@@ -36,6 +36,9 @@ export type BranchInfo = {
   isCurrent: boolean;
   isRemote: boolean;
   upstream: string | null;
+  /** Local branch whose upstream has been deleted on the remote
+   *  (`for-each-ref ... %(upstream:track)` reports `[gone]`). */
+  gone: boolean;
 };
 
 export type ExternalEditor = {

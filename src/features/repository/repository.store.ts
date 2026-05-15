@@ -308,6 +308,13 @@ type State = {
   fetchBranches: () => Promise<void>;
   setBranchMenuOpen: (open: boolean) => void;
   checkoutBranch: (name: string) => Promise<void>;
+  /** `git branch -d <name>` (or `-D` if force). Refuses to delete the
+   *  current branch — UI guards against picking it. */
+  deleteBranch: (name: string, opts?: { force?: boolean }) => Promise<void>;
+  /** Confirm-then-delete all local branches whose upstream has been
+   *  removed on the remote (gone). Bulk equivalent of the per-row
+   *  delete; uses `-D` because gone branches may have unpushed commits. */
+  requestPruneGoneBranches: () => void;
   /** Create a new branch (optionally based on `base`) and switch to it. */
   createBranch: (name: string, base?: string) => Promise<void>;
   /** Refresh the stash list (also called after push/pop/apply/drop). */
@@ -1402,6 +1409,64 @@ export const useRepoStore = create<State>((set, get) => ({
     } catch (err) {
       set({ errorMessage: err instanceof Error ? err.message : String(err) });
     }
+  },
+
+  deleteBranch: async (name, opts) => {
+    const state = get();
+    if (!state.repository) return;
+    try {
+      await gitApi.deleteBranch(state.repository.path, name, opts?.force);
+      get().pushToast(`Deleted ${name}`);
+      await get().fetchBranches();
+    } catch (err) {
+      set({ errorMessage: err instanceof Error ? err.message : String(err) });
+    }
+  },
+
+  requestPruneGoneBranches: () => {
+    const state = get();
+    if (!state.repository) return;
+    const gone = state.branches.filter((b) => !b.isRemote && b.gone);
+    if (gone.length === 0) {
+      state.pushToast("No gone branches to prune");
+      return;
+    }
+    const names = gone.map((b) => b.name);
+    const preview =
+      names.length <= 5
+        ? names.join(", ")
+        : `${names.slice(0, 5).join(", ")} … (+${names.length - 5} more)`;
+    set({
+      confirm: {
+        title: `Prune ${names.length} gone branch${names.length === 1 ? "" : "es"}?`,
+        body: `Local branches whose remote was deleted: ${preview}. This runs \`git branch -D\` on each — unpushed commits in those branches will be lost. The reflog still has them for ~30 days.`,
+        confirmLabel: `Delete ${names.length}`,
+        danger: true,
+        onConfirm: async () => {
+          set({ confirm: null });
+          const errors: string[] = [];
+          for (const n of names) {
+            try {
+              await gitApi.deleteBranch(
+                state.repository!.path,
+                n,
+                /* force */ true,
+              );
+            } catch (err) {
+              errors.push(`${n}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+          await get().fetchBranches();
+          if (errors.length > 0) {
+            set({ errorMessage: errors.join("\n") });
+          } else {
+            get().pushToast(
+              `Pruned ${names.length} branch${names.length === 1 ? "" : "es"}`,
+            );
+          }
+        },
+      },
+    });
   },
 
   cancelPendingStashCheckout: () => set({ pendingStashCheckout: null }),

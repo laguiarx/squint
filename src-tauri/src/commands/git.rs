@@ -603,6 +603,13 @@ pub struct BranchInfo {
     pub is_current: bool,
     pub is_remote: bool,
     pub upstream: Option<String>,
+    /// `true` when this local branch had an upstream that no longer exists
+    /// on the remote (someone deleted it on GitHub, `git fetch --prune`
+    /// dropped the ref, but the local branch is still here). Equivalent
+    /// to `git for-each-ref ... --format=%(upstream:track)` containing
+    /// `[gone]`. Used by the UI to show a "gone" badge and let the user
+    /// prune them in bulk.
+    pub gone: bool,
 }
 
 #[tauri::command]
@@ -610,20 +617,23 @@ pub fn list_branches(repo_path: String) -> AppResult<Vec<BranchInfo>> {
     let repo = resolve_repo(&repo_path)?;
     let mut out: Vec<BranchInfo> = Vec::new();
 
-    // Local branches: `<head-marker>|<short name>|<upstream short or empty>`
+    // Local branches: `<head-marker>|<short name>|<upstream short>|<track>`
+    // The track field is `[ahead 2]` / `[behind 1]` / `[gone]` etc. when
+    // upstream is set; empty when no upstream.
     if let Ok(raw) = run_git_string(
         &repo,
         &[
             "for-each-ref",
-            "--format=%(HEAD)|%(refname:short)|%(upstream:short)",
+            "--format=%(HEAD)|%(refname:short)|%(upstream:short)|%(upstream:track)",
             "refs/heads/",
         ],
     ) {
         for line in raw.lines() {
-            let mut parts = line.splitn(3, '|');
+            let mut parts = line.splitn(4, '|');
             let head = parts.next().unwrap_or("");
             let name = parts.next().unwrap_or("").trim();
             let upstream = parts.next().unwrap_or("").trim();
+            let track = parts.next().unwrap_or("").trim();
             if name.is_empty() {
                 continue;
             }
@@ -636,6 +646,7 @@ pub fn list_branches(repo_path: String) -> AppResult<Vec<BranchInfo>> {
                 } else {
                     Some(upstream.to_string())
                 },
+                gone: track.contains("[gone]") || track.contains("gone"),
             });
         }
     }
@@ -655,10 +666,42 @@ pub fn list_branches(repo_path: String) -> AppResult<Vec<BranchInfo>> {
                 is_current: false,
                 is_remote: true,
                 upstream: None,
+                gone: false,
             });
         }
     }
     Ok(out)
+}
+
+/// Delete a local branch. `force=true` maps to `git branch -D` (drops
+/// unmerged commits — used for "Prune gone branches" since the local
+/// branch may have unique commits that never made it upstream). Refuses
+/// to delete the current branch.
+#[tauri::command]
+pub fn git_delete_branch(
+    repo_path: String,
+    name: String,
+    force: Option<bool>,
+) -> AppResult<()> {
+    let repo = resolve_repo(&repo_path)?;
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::msg("Branch name is empty"));
+    }
+    reject_flaggish("Branch name", trimmed)?;
+    // Don't let the caller blow away the branch they're standing on.
+    let current = run_git_string(&repo, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if current == trimmed {
+        return Err(AppError::msg(format!(
+            "Can't delete '{trimmed}' while it's the current branch — checkout a different branch first",
+        )));
+    }
+    let flag = if force.unwrap_or(false) { "-D" } else { "-d" };
+    run_git(&repo, &["branch", flag, trimmed])?;
+    Ok(())
 }
 
 /// Create a new branch off `base` (or HEAD when `base` is None) and switch

@@ -134,6 +134,14 @@ export async function undoLastCommit(repoPath: string): Promise<void> {
   await invoke<void>("git_undo_last_commit", { repoPath });
 }
 
+export async function deleteBranch(
+  repoPath: string,
+  name: string,
+  force?: boolean,
+): Promise<void> {
+  await invoke<void>("git_delete_branch", { repoPath, name, force });
+}
+
 export async function defaultBranch(repoPath: string): Promise<string> {
   return invoke<string>("git_default_branch", { repoPath });
 }

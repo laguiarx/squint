@@ -26,8 +26,8 @@ pub struct AiCliInfo {
 #[tauri::command]
 pub async fn detect_ai_clis() -> AppResult<Vec<AiCliInfo>> {
     let candidates: &[(&str, &str, &str)] = &[
-        ("claude", "Claude Code", "--version"),
         ("codex", "Codex", "--version"),
+        ("claude", "Claude Code", "--version"),
     ];
     let handles: Vec<_> = candidates
         .iter()

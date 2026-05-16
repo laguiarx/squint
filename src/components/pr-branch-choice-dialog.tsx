@@ -106,13 +106,43 @@ export function PrBranchChoiceDialog() {
 
   if (!open) return null;
 
-  const canRun =
-    mode === "current" || (mode === "new" && newName.trim().length > 0);
+  // `mode === "new"` no longer requires a typed name — leave the input
+  // empty and we'll AI-generate one transparently when "Create PR" is
+  // clicked. The input still works as a manual override / for the wand
+  // pre-fill button.
+  const canRun = mode === "current" || mode === "new";
 
-  const onConfirm = () => {
-    void createPr({
-      newBranchName: mode === "new" ? newName.trim() : null,
-    });
+  const onConfirm = async () => {
+    // Current-branch path: nothing to resolve, fire and forget.
+    if (mode === "current") {
+      void createPr({ newBranchName: null });
+      return;
+    }
+    // New-branch path: if the user typed a name, use it; otherwise
+    // generate one in the background before kicking off createPr so the
+    // pipeline starts with a real branch name in hand. `generating`
+    // gates the Create-PR button so re-clicks during the AI call are
+    // no-ops.
+    const typed = newName.trim();
+    if (typed) {
+      void createPr({ newBranchName: typed });
+      return;
+    }
+    if (generating) return;
+    setGenerating(true);
+    const suggestion = await generateBranchName();
+    setGenerating(false);
+    if (!suggestion) {
+      // `generateBranchName` already pushes a toast on failure (no CLI,
+      // empty diff, etc.) — bail without closing the dialog so the user
+      // can either type a name or switch back to "Use current branch".
+      return;
+    }
+    // Reflect the generated name in the input so the user sees what
+    // they're about to commit-and-PR with, even briefly before the
+    // dialog closes.
+    setNewName(suggestion);
+    void createPr({ newBranchName: suggestion });
   };
 
   // Each radio-choice row: subtle border + accent when selected.
@@ -195,12 +225,12 @@ export function PrBranchChoiceDialog() {
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && canRun) {
+                  if (e.key === "Enter" && canRun && !generating) {
                     e.preventDefault();
-                    onConfirm();
+                    void onConfirm();
                   }
                 }}
-                placeholder="feature/new-branch-name"
+                placeholder="leave blank to auto-name from the diff"
                 spellCheck={false}
                 autoCapitalize="off"
                 autoCorrect="off"
@@ -238,16 +268,28 @@ export function PrBranchChoiceDialog() {
         </div>
 
         <div className="flex gap-2 justify-end mt-1">
-          <button className={BTN_GHOST} onClick={closeDialog} type="button">
+          <button
+            className={BTN_GHOST}
+            onClick={closeDialog}
+            type="button"
+            disabled={generating}
+          >
             Cancel
           </button>
           <button
             className={BTN_PRIMARY}
-            onClick={onConfirm}
-            disabled={!canRun}
+            onClick={() => void onConfirm()}
+            disabled={!canRun || generating}
             type="button"
           >
-            Create PR
+            {generating ? (
+              <>
+                <Spinner />
+                <span>Naming branch…</span>
+              </>
+            ) : (
+              "Create PR"
+            )}
           </button>
         </div>
       </div>

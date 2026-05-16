@@ -353,7 +353,7 @@ export function App() {
         </div>
       ) : bootstrapping ? (
         <div
-          className="flex-1 grid place-items-center gap-3.5 grid-flow-row bg-bg-0"
+          className="flex-1 flex flex-col items-center justify-center gap-3.5 bg-bg-0 text-center"
           role="status"
           aria-live="polite"
         >

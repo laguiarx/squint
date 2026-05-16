@@ -551,39 +551,54 @@ export const I: Record<IconName, ReactElement> = {
       />
     </svg>
   ),
-  // Hunks-only mode — rectangle with two solid rules, then a dashed rule
-  // (representing skipped context), then more solid rules. Reads as "only
-  // the changed regions are shown".
+  // Hunks-only mode — separated changed blocks with skipped context between
+  // them. Intentionally not a file outline so it does not read like
+  // `fileFull` in the segmented control.
   fileHunks: (
     <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
       <rect
-        x="2.5"
-        y="2"
-        width="11"
-        height="12"
-        rx="1.5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.2"
+        x="3"
+        y="2.5"
+        width="10"
+        height="3.5"
+        rx="1"
+        fill="currentColor"
+        opacity="0.22"
       />
       <path
-        d="M4.5 5h7M4.5 7h7"
+        d="M4.5 4h7"
         stroke="currentColor"
         strokeWidth="1.1"
         strokeLinecap="round"
       />
       <path
-        d="M4.5 9h7"
+        d="M5 8h1.2M7.4 8h1.2M9.8 8H11"
         stroke="currentColor"
         strokeWidth="1.1"
-        strokeDasharray="1.6 1.4"
+        strokeLinecap="round"
+        opacity="0.65"
+      />
+      <rect
+        x="3"
+        y="10"
+        width="10"
+        height="3.5"
+        rx="1"
+        fill="currentColor"
+        opacity="0.22"
+      />
+      <path
+        d="M4.5 11.5h7"
+        stroke="currentColor"
+        strokeWidth="1.1"
         strokeLinecap="round"
       />
       <path
-        d="M4.5 11h7"
+        d="M2.5 2.5v3.5M13.5 2.5v3.5M2.5 10v3.5M13.5 10v3.5"
         stroke="currentColor"
         strokeWidth="1.1"
         strokeLinecap="round"
+        opacity="0.85"
       />
     </svg>
   ),

@@ -26,8 +26,8 @@ pub struct AiCliInfo {
 #[tauri::command]
 pub async fn detect_ai_clis() -> AppResult<Vec<AiCliInfo>> {
     let candidates: &[(&str, &str, &str)] = &[
-        ("claude", "Claude Code", "--version"),
         ("codex", "Codex", "--version"),
+        ("claude", "Claude Code", "--version"),
     ];
     let handles: Vec<_> = candidates
         .iter()
@@ -263,6 +263,20 @@ fn which(binary: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_ai_clis_prioritizes_codex_before_claude() {
+        let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
+        let clis = rt.block_on(detect_ai_clis()).expect("detect AI CLIs");
+        let ids: Vec<&str> = clis.iter().map(|cli| cli.id.as_str()).collect();
+
+        assert_eq!(&ids[..2], &["codex", "claude"]);
+    }
 }
 
 /// Return a chunk of unified diff useful to feed an AI prompt.

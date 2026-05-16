@@ -41,6 +41,17 @@ export type BranchInfo = {
   gone: boolean;
 };
 
+export type BranchSyncSkipped = {
+  branch: string;
+  reason: string;
+};
+
+export type BranchSyncResult = {
+  updated: string[];
+  upToDate: number;
+  skipped: BranchSyncSkipped[];
+};
+
 export type ExternalEditor = {
   id: string;
   name: string;

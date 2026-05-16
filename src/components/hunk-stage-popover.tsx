@@ -20,6 +20,14 @@ type Props = {
   onGenerate?: (signal: AbortSignal) => Promise<string>;
 };
 
+const GENERATE_ICON_BUTTON =
+  "absolute top-1.5 right-1.5 w-6 h-6 grid place-items-center rounded-2 " +
+  "bg-transparent border-0 text-fg-2 cursor-pointer " +
+  "transition-[background-color,color] duration-[120ms] " +
+  "hover:bg-accent-soft hover:text-accent disabled:opacity-35 disabled:cursor-not-allowed " +
+  "disabled:hover:bg-transparent disabled:hover:text-fg-2 " +
+  "[&_[data-ai-spinner]]:w-[14px] [&_[data-ai-spinner]]:h-[14px]";
+
 /**
  * Popover mounted inside `.hunk-popover-host` (the diff body components
  * wrap us in that host element so HunkActionBar's
@@ -113,7 +121,7 @@ export function HunkStagePopover({
         <textarea
           ref={inputRef}
           className={cn(
-            "w-full min-h-14 px-2.5 pt-2 pb-[34px] resize-y",
+            "w-full min-h-14 pl-2.5 pr-9 pt-2 pb-[34px] resize-y",
             "rounded-2 border border-bd-2 bg-bg-0 text-fg-0",
             "font-mono text-[12px] leading-[1.45]",
             "focus:border-accent focus-within:border-accent outline-none",
@@ -135,17 +143,10 @@ export function HunkStagePopover({
         />
         <button
           type="button"
-          className={cn(
-            "absolute bottom-1.5 right-2 inline-flex items-center gap-1.5",
-            "h-[22px] pl-2 pr-2.5 rounded-full text-[11px] font-medium",
-            "bg-accent-softer text-accent-hi",
-            "border border-[color-mix(in_oklab,var(--accent)_30%,transparent)]",
-            "transition-colors duration-[120ms]",
-            "hover:bg-accent-soft hover:border-accent hover:text-accent-fg",
-            "disabled:opacity-70 disabled:cursor-default",
-          )}
+          className={GENERATE_ICON_BUTTON}
           onClick={generate}
           disabled={busy || generating || !aiEnabled}
+          aria-label="Generate commit message from this hunk"
           title={
             aiEnabled
               ? "Generate commit message from this hunk"
@@ -159,12 +160,6 @@ export function HunkStagePopover({
               I.sparkles
             )}
           </span>
-          <span>{generating ? "Generating…" : "Generate"}</span>
-          {!aiEnabled ? (
-            <span className="font-mono text-fg-2 text-[9px] uppercase tracking-[0.06em] bg-white/[0.06] px-[5px] py-px rounded-[3px] ml-0.5">
-              soon
-            </span>
-          ) : null}
         </button>
       </div>
       <div className="flex flex-col gap-2 text-[11px]">

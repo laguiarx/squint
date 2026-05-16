@@ -87,6 +87,7 @@ pub fn run() {
             commands::git::git_push,
             commands::git::git_pull,
             commands::git::git_fetch,
+            commands::git::git_sync_branches,
             commands::git::git_undo_last_commit,
             commands::git::git_default_branch,
             commands::git::git_remote_branches,

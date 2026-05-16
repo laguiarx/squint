@@ -624,6 +624,165 @@ pub struct BranchInfo {
     pub gone: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchSyncSkipped {
+    pub branch: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchSyncResult {
+    pub updated: Vec<String>,
+    pub up_to_date: u32,
+    pub skipped: Vec<BranchSyncSkipped>,
+}
+
+#[derive(Debug)]
+struct BranchSyncCandidate {
+    name: String,
+    upstream: String,
+    track: String,
+    worktree_path: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum BranchSyncDecision {
+    FastForward,
+    UpToDate,
+    Skip(String),
+    Ignore,
+}
+
+fn track_count(track: &str, label: &str) -> u32 {
+    let Some(idx) = track.find(label) else {
+        return 0;
+    };
+    track[idx + label.len()..]
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap_or(0)
+}
+
+fn classify_branch_sync(
+    branch: &BranchSyncCandidate,
+    current_worktree_path: &str,
+) -> BranchSyncDecision {
+    if branch.track.contains("[gone]") || branch.track.contains("gone") {
+        return BranchSyncDecision::Skip("upstream is gone".into());
+    }
+    if branch.upstream.trim().is_empty() {
+        return BranchSyncDecision::Ignore;
+    }
+
+    let ahead = track_count(&branch.track, "ahead");
+    let behind = track_count(&branch.track, "behind");
+    if ahead > 0 && behind > 0 {
+        return BranchSyncDecision::Skip("diverged from upstream".into());
+    }
+    if behind == 0 {
+        return BranchSyncDecision::UpToDate;
+    }
+
+    let worktree_path = branch.worktree_path.trim();
+    if !worktree_path.is_empty() && worktree_path != current_worktree_path {
+        return BranchSyncDecision::Skip(format!("checked out at {worktree_path}"));
+    }
+    BranchSyncDecision::FastForward
+}
+
+fn parse_branch_sync_candidates(raw: &str) -> Vec<BranchSyncCandidate> {
+    raw.lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(4, '\x1f');
+            let name = parts.next()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+            Some(BranchSyncCandidate {
+                name: name.to_string(),
+                upstream: parts.next().unwrap_or("").trim().to_string(),
+                track: parts.next().unwrap_or("").trim().to_string(),
+                worktree_path: parts.next().unwrap_or("").trim().to_string(),
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub async fn git_sync_branches(repo_path: String) -> AppResult<BranchSyncResult> {
+    let repo = resolve_repo(&repo_path)?;
+    tokio::task::spawn_blocking(move || sync_branches(&repo))
+        .await
+        .map_err(|e| AppError::msg(format!("sync branches task panicked: {e}")))?
+}
+
+fn sync_branches(repo: &Path) -> AppResult<BranchSyncResult> {
+    run_git(repo, &["fetch", "--all", "--prune"])?;
+
+    let current = run_git_string(repo, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let current_worktree_path = repo.to_string_lossy().to_string();
+    let raw = run_git_string(
+        repo,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)%x1f%(upstream:short)%x1f%(upstream:track)%x1f%(worktreepath)",
+            "refs/heads/",
+        ],
+    )?;
+
+    let mut result = BranchSyncResult {
+        updated: Vec::new(),
+        up_to_date: 0,
+        skipped: Vec::new(),
+    };
+
+    for branch in parse_branch_sync_candidates(&raw) {
+        match classify_branch_sync(&branch, &current_worktree_path) {
+            BranchSyncDecision::FastForward => {
+                let sync_result = if branch.name == current {
+                    run_git(repo, &["merge", "--ff-only", &branch.upstream])
+                } else {
+                    let local_ref = format!("refs/heads/{}", branch.name);
+                    match run_git_string(repo, &["rev-parse", "--verify", &branch.upstream]) {
+                        Ok(oid) => {
+                            let oid = oid.trim().to_string();
+                            run_git(repo, &["update-ref", &local_ref, &oid])
+                        }
+                        Err(err) => Err(err),
+                    }
+                };
+                match sync_result {
+                    Ok(_) => result.updated.push(branch.name),
+                    Err(err) => result.skipped.push(BranchSyncSkipped {
+                        branch: branch.name,
+                        reason: err.to_string(),
+                    }),
+                }
+            }
+            BranchSyncDecision::UpToDate => {
+                result.up_to_date += 1;
+            }
+            BranchSyncDecision::Skip(reason) => {
+                result.skipped.push(BranchSyncSkipped {
+                    branch: branch.name,
+                    reason,
+                });
+            }
+            BranchSyncDecision::Ignore => {}
+        }
+    }
+
+    Ok(result)
+}
+
 #[tauri::command]
 pub fn list_branches(repo_path: String) -> AppResult<Vec<BranchInfo>> {
     let repo = resolve_repo(&repo_path)?;
@@ -1348,4 +1507,54 @@ pub fn write_working_file(
     }
     std::fs::write(&full, content).map_err(AppError::Io)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_behind_only_branch_as_fast_forwardable() {
+        let branch = BranchSyncCandidate {
+            name: "feature/login".into(),
+            upstream: "origin/feature/login".into(),
+            track: "[behind 2]".into(),
+            worktree_path: String::new(),
+        };
+
+        assert_eq!(
+            classify_branch_sync(&branch, "/repo"),
+            BranchSyncDecision::FastForward
+        );
+    }
+
+    #[test]
+    fn skips_diverged_branches() {
+        let branch = BranchSyncCandidate {
+            name: "feature/login".into(),
+            upstream: "origin/feature/login".into(),
+            track: "[ahead 1, behind 2]".into(),
+            worktree_path: String::new(),
+        };
+
+        assert_eq!(
+            classify_branch_sync(&branch, "/repo"),
+            BranchSyncDecision::Skip("diverged from upstream".into())
+        );
+    }
+
+    #[test]
+    fn skips_branch_checked_out_in_another_worktree() {
+        let branch = BranchSyncCandidate {
+            name: "main".into(),
+            upstream: "origin/main".into(),
+            track: "[behind 1]".into(),
+            worktree_path: "/tmp/squint-main".into(),
+        };
+
+        assert_eq!(
+            classify_branch_sync(&branch, "/repo"),
+            BranchSyncDecision::Skip("checked out at /tmp/squint-main".into())
+        );
+    }
 }

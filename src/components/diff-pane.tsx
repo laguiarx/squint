@@ -111,6 +111,9 @@ export function DiffPane() {
   const applyHunkPatchAndCommit = useRepoStore(
     (s) => s.applyHunkPatchAndCommit,
   );
+  const generateHunkCommitDraft = useRepoStore(
+    (s) => s.generateHunkCommitDraft,
+  );
   const requestRevertHunk = useRepoStore((s) => s.requestRevertHunk);
   const diffExpansion = useRepoStore((s) => s.settings.diffExpansion);
 
@@ -466,6 +469,16 @@ export function DiffPane() {
           );
           setPendingHunk(null);
         }}
+        onGenerate={async (signal) => {
+          const target = hunks[pendingHunk.hunkIdx];
+          if (!target) return "";
+          const patch = buildPatch(
+            file.path,
+            [target],
+            file.oldPath ?? undefined,
+          );
+          return generateHunkCommitDraft(patch, signal);
+        }}
       />
     );
   }, [
@@ -476,6 +489,7 @@ export function DiffPane() {
     hunks,
     applyHunkPatch,
     applyHunkPatchAndCommit,
+    generateHunkCommitDraft,
   ]);
 
   if (!repo) return null;
@@ -1033,4 +1047,3 @@ function FilePane({
     </main>
   );
 }
-

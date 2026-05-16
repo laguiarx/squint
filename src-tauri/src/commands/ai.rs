@@ -3,6 +3,7 @@ use std::process::{Command, Stdio};
 use crate::commands::{resolve_repo, run_git_string};
 use crate::error::{AppError, AppResult};
 
+// Test-only marker to simulate main advancing while develop is open in Squint.
 /// One AI CLI we know how to drive. `available = true` when the CLI binary
 /// is on PATH (detected via `which`).
 #[derive(Debug, serde::Serialize)]

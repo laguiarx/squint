@@ -415,7 +415,7 @@ export function PrBranchChoiceDialog() {
         </div>
 
         {/* STATUS section — behind/ahead + rebase/merge */}
-        {base ? <StatusBlock
+        <StatusBlock
           base={base}
           loading={prDialog.statusLoading}
           behind={prDialog.behind}
@@ -426,7 +426,7 @@ export function PrBranchChoiceDialog() {
           onRebase={() => void prDialogRebase()}
           onMerge={() => void prDialogMerge()}
           onSkip={prDialogSkipBehind}
-        /> : null}
+        />
 
         <div className="flex gap-2 justify-end mt-1">
           <button
@@ -489,7 +489,7 @@ function StatusBlock({
   onMerge,
   onSkip,
 }: {
-  base: string;
+  base: string | null;
   loading: boolean;
   behind: number;
   ahead: number;
@@ -500,6 +500,20 @@ function StatusBlock({
   onMerge: () => void;
   onSkip: () => void;
 }) {
+  if (!base) {
+    return (
+      <div className="flex gap-3 items-start">
+        <div className={ROW_LABEL}>Status</div>
+        <div className="flex-1 flex flex-col gap-1.5">
+          <div className="min-h-[36px] flex items-center gap-2 px-3 py-2 rounded-2 bg-bg-1 border border-bd-1 text-[11.5px] text-fg-2">
+            <Spinner />
+            Resolving base branch…
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (sameBranch) {
     return (
       <div className="flex gap-3 items-start">
@@ -524,14 +538,14 @@ function StatusBlock({
       <div className={ROW_LABEL}>Status</div>
       <div className="flex-1 flex flex-col gap-1.5">
         {loading ? (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-2 bg-bg-1 border border-bd-1 text-[11.5px] text-fg-2">
+          <div className="min-h-[36px] flex items-center gap-2 px-3 py-2 rounded-2 bg-bg-1 border border-bd-1 text-[11.5px] text-fg-2">
             <Spinner />
             Comparing with origin/{base}…
           </div>
         ) : behind === 0 ? (
           <div
             className={cn(
-              "flex items-center gap-2 px-3 py-2 rounded-2 text-[11.5px]",
+              "min-h-[36px] flex items-center gap-2 px-3 py-2 rounded-2 text-[11.5px]",
               "bg-[color-mix(in_oklab,var(--git-add)_10%,transparent)]",
               "border border-[color-mix(in_oklab,var(--git-add)_30%,transparent)]",
               "text-fg-1",
@@ -548,7 +562,7 @@ function StatusBlock({
         ) : ignoreBehind ? (
           <div
             className={cn(
-              "flex items-center gap-2 px-3 py-2 rounded-2 text-[11.5px]",
+              "min-h-[36px] flex items-center gap-2 px-3 py-2 rounded-2 text-[11.5px]",
               "bg-bg-1 border border-bd-1 text-fg-1",
             )}
           >
@@ -559,7 +573,7 @@ function StatusBlock({
           <>
             <div
               className={cn(
-                "flex items-center gap-2 px-3 py-2 rounded-2 text-[11.5px]",
+                "min-h-[36px] flex items-center gap-2 px-3 py-2 rounded-2 text-[11.5px]",
                 "bg-[color-mix(in_oklab,var(--git-mod)_14%,transparent)]",
                 "border border-[color-mix(in_oklab,var(--git-mod)_38%,transparent)]",
                 "text-fg-1",

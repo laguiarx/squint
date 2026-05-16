@@ -177,7 +177,7 @@ type State = {
    * composer's chevron button to render a spinner + by the dropdown menu
    * to mark which row is currently running. `null` when idle.
    */
-  gitOpLoading: "push" | "pull" | "fetch" | "undo" | null;
+  gitOpLoading: "push" | "pull" | "fetch" | "sync" | "undo" | null;
   /**
    * State of the multi-step "Create PR" pipeline. `idle` until the user
    * fires it; cycles through the named steps with the current human-readable
@@ -449,6 +449,11 @@ type State = {
   gitPull: () => Promise<void>;
   /** `git fetch --all --prune`. */
   gitFetchRemote: () => Promise<void>;
+  /**
+   * Fetch/prune remotes, then fast-forward every local branch that can be
+   * advanced safely without checking it out.
+   */
+  gitSyncBranches: () => Promise<void>;
   /** Background-friendly fetch fired on window focus. Silent on success,
    *  refreshes the branch list + working tree, and toasts (once) when the
    *  current branch's upstream becomes `gone` (PR merged + branch deleted
@@ -526,6 +531,11 @@ type State = {
     message: string,
     label: string,
   ) => Promise<void>;
+  /** Generate a commit-message draft from one hunk patch only. */
+  generateHunkCommitDraft: (
+    patch: string,
+    signal?: AbortSignal,
+  ) => Promise<string>;
   /**
    * Discards a working-tree hunk (`git apply -R` on the working tree). Always
    * routes through a confirm modal — it's destructive.
@@ -640,10 +650,10 @@ function clearEditBuffers(
  *      (which doesn't touch `setAiKind`) would fire on an empty list and
  *      report "No AI CLI detected" even with Codex installed.
  *   2. **Prefer the user's pick** when it's still available.
- *   3. **Fall back to the first installed CLI** when the saved preference
- *      points at something that isn't on disk (e.g. user uninstalled
- *      Claude Code, or switched machines) — and persist that fallback so
- *      future runs go straight through.
+ *   3. **Fall back to the first installed CLI in backend priority order**
+ *      when the saved preference points at something that isn't on disk
+ *      (e.g. user uninstalled Codex, or switched machines) — and persist
+ *      that fallback so future runs go straight through.
  *
  * Returns `null` only when no CLI is installed at all.
  */
@@ -763,6 +773,31 @@ async function runWithAutoStash<T>(
   }
 }
 
+const MAX_AI_DIFF_BYTES = 120_000;
+
+function truncateAiDiff(s: string): string {
+  return s.length > MAX_AI_DIFF_BYTES
+    ? s.slice(0, MAX_AI_DIFF_BYTES) +
+        `\n\n[…truncated ${s.length - MAX_AI_DIFF_BYTES} bytes]`
+    : s;
+}
+
+function prependUserPrompt(userPrompt: string, lines: string[]): string[] {
+  const trimmed = userPrompt.trim();
+  if (!trimmed) return lines;
+  return ["USER INSTRUCTIONS:", trimmed, "", ...lines];
+}
+
+function buildCommitPromptFromDiff(diff: string, userPrompt: string): string {
+  return prependUserPrompt(userPrompt, [
+    "Write a concise conventional-style commit message for the following diff.",
+    "Output ONLY the commit message (subject + optional body), no explanation, no Markdown fences.",
+    "",
+    "DIFF:",
+    truncateAiDiff(diff),
+  ]).join("\n");
+}
+
 /**
  * Compose the prompt sent to the user's AI CLI for a given action. Kept on
  * the renderer side (vs the Rust layer) so we can iterate on wording without
@@ -773,40 +808,17 @@ async function buildPromptForKind(
   repoPath: string,
   userPrompt: string,
 ): Promise<string> {
-  // Cap the diff at ~120kB so we don't blow the CLI's prompt budget. Most
-  // real review chunks are well under this.
-  const MAX_DIFF_BYTES = 120_000;
-  const truncate = (s: string) =>
-    s.length > MAX_DIFF_BYTES
-      ? s.slice(0, MAX_DIFF_BYTES) +
-        `\n\n[…truncated ${s.length - MAX_DIFF_BYTES} bytes]`
-      : s;
-  // Prepend the user's custom instructions when set. Goes above the
-  // built-in defaults so the user can ADD on top of (or override implicitly
-  // through emphasis) without rewriting the entire prompt.
-  const prepend = (lines: string[]): string[] => {
-    const trimmed = userPrompt.trim();
-    if (!trimmed) return lines;
-    return ["USER INSTRUCTIONS:", trimmed, "", ...lines];
-  };
-
   switch (kind) {
     case "commit": {
       const diff = await aiApi.getDiffForAi(repoPath, "staged");
-      return prepend([
-        "Write a concise conventional-style commit message for the following diff.",
-        "Output ONLY the commit message (subject + optional body), no explanation, no Markdown fences.",
-        "",
-        "DIFF:",
-        truncate(diff),
-      ]).join("\n");
+      return buildCommitPromptFromDiff(diff, userPrompt);
     }
     case "pr": {
       const [log, diff] = await Promise.all([
         aiApi.getLogForAi(repoPath, "branch"),
         aiApi.getDiffForAi(repoPath, "branch"),
       ]);
-      return prepend([
+      return prependUserPrompt(userPrompt, [
         "Draft a pull-request TITLE and DESCRIPTION for the changes below.",
         "",
         "Output format (STRICT — no ``` fences around the whole output):",
@@ -827,28 +839,28 @@ async function buildPromptForKind(
         log.trim() || "(no commit history available)",
         "",
         "DIFF:",
-        truncate(diff),
+        truncateAiDiff(diff),
       ]).join("\n");
     }
     case "summary": {
       const diff = await aiApi.getDiffForAi(repoPath, "working");
-      return prepend([
+      return prependUserPrompt(userPrompt, [
         "Summarize the following diff in 4–8 bullet points.",
         "Focus on user-visible behavior and architectural changes; ignore noise like formatting.",
         "",
         "DIFF:",
-        truncate(diff),
+        truncateAiDiff(diff),
       ]).join("\n");
     }
     case "risk": {
       const diff = await aiApi.getDiffForAi(repoPath, "working");
-      return prepend([
+      return prependUserPrompt(userPrompt, [
         "Review the following diff for bugs, regressions, and risky changes.",
         "Output a Markdown list — for each issue include the file/line and a one-sentence rationale.",
         "If nothing material stands out, say so explicitly.",
         "",
         "DIFF:",
-        truncate(diff),
+        truncateAiDiff(diff),
       ]).join("\n");
     }
   }
@@ -1968,10 +1980,23 @@ export const useRepoStore = create<State>((set, get) => ({
     try {
       const list = await aiApi.detectAiClis();
       set({ aiCliList: list, aiCliLoading: false });
-      // Default to the first available CLI if the user hasn't picked one.
-      const cur = state.settings.preferredAiCli;
+      // Prefer Codex for new installs and migrate the old "first detected"
+      // default once. After that, explicit user choices persist normally.
+      const settings = get().settings;
+      const cur = settings.preferredAiCli;
       const validCurrent =
         cur != null && list.some((c) => c.id === cur && c.available);
+      const codex = list.find((c) => c.id === "codex" && c.available);
+      if (!settings.aiCliDefaultMigratedToCodex && codex) {
+        const next = {
+          ...settings,
+          preferredAiCli: codex.id,
+          aiCliDefaultMigratedToCodex: true,
+        };
+        writeSettings(next);
+        set({ settings: next });
+        return;
+      }
       if (!validCurrent) {
         const firstAvail = list.find((c) => c.available);
         if (firstAvail) get().setPreferredAiCli(firstAvail.id);
@@ -2060,6 +2085,36 @@ export const useRepoStore = create<State>((set, get) => ({
         commitDraftLoading: false,
         errorMessage: err instanceof Error ? err.message : String(err),
       });
+    }
+  },
+
+  generateHunkCommitDraft: async (patch, signal) => {
+    const state = get();
+    if (!state.repository) return "";
+    const throwIfAborted = () => {
+      if (signal?.aborted) {
+        throw new DOMException("Cancelled", "AbortError");
+      }
+    };
+    throwIfAborted();
+    const cli = await resolveAvailableCli(get, set);
+    if (!cli) {
+      const message =
+        "No AI CLI detected. Install Claude Code or Codex CLI and pick one in Preferences → AI.";
+      set({ errorMessage: message });
+      throw new Error(message);
+    }
+    try {
+      const userPrompt = state.settings.aiSystemPrompts.commit ?? "";
+      const prompt = buildCommitPromptFromDiff(patch, userPrompt);
+      const text = await aiApi.runAiCli(cli.id, prompt, state.repository.path);
+      throwIfAborted();
+      return stripOuterCodeFence(text.trim()).trim();
+    } catch (err) {
+      if (!(err instanceof DOMException && err.name === "AbortError")) {
+        set({ errorMessage: err instanceof Error ? err.message : String(err) });
+      }
+      throw err;
     }
   },
 
@@ -2178,6 +2233,41 @@ export const useRepoStore = create<State>((set, get) => ({
       get().pushToast("Fetched");
       await get().refresh();
       await get().fetchBranches();
+    } catch (err) {
+      set({ errorMessage: err instanceof Error ? err.message : String(err) });
+    } finally {
+      set({ gitOpLoading: null });
+    }
+  },
+
+  gitSyncBranches: async () => {
+    const state = get();
+    if (!state.repository || state.gitOpLoading != null) return;
+    set({ gitOpLoading: "sync" });
+    try {
+      const result = await gitApi.syncBranches(state.repository.path);
+      await get().refresh();
+      await get().fetchBranches();
+
+      const updated = result.updated.length;
+      const skipped = result.skipped.length;
+      const unchanged = result.upToDate;
+      const summary = [
+        updated === 1 ? "Synced 1 branch" : `Synced ${updated} branches`,
+        unchanged > 0 ? `${unchanged} unchanged` : null,
+        skipped > 0 ? `${skipped} skipped` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      get().pushToast(summary || "No branches to sync");
+
+      if (skipped > 0) {
+        set({
+          errorMessage: result.skipped
+            .map((s) => `${s.branch}: ${s.reason}`)
+            .join("\n"),
+        });
+      }
     } catch (err) {
       set({ errorMessage: err instanceof Error ? err.message : String(err) });
     } finally {

@@ -27,6 +27,8 @@ export function BranchMenu() {
   const requestPruneGoneBranches = useRepoStore(
     (s) => s.requestPruneGoneBranches,
   );
+  const gitSyncBranches = useRepoStore((s) => s.gitSyncBranches);
+  const gitOpLoading = useRepoStore((s) => s.gitOpLoading);
 
   // Count of "gone" local branches drives the visibility of the
   // bulk-prune button at the bottom of the menu.
@@ -215,19 +217,39 @@ export function BranchMenu() {
             </button>
           </div>
         ) : (
-          <button
-            className={cn(
-              "flex items-center gap-2 w-full px-3 py-1.5 text-[12px] text-accent",
-              "bg-transparent border-0 border-b border-bd-0 hover:bg-bg-hover",
-            )}
-            onClick={() => setCreating(true)}
-            type="button"
-          >
-            <span className="grid place-items-center text-accent">
-              {I.plus}
-            </span>
-            <span>Create new branch…</span>
-          </button>
+          <div className="flex items-stretch border-b border-bd-0">
+            <button
+              className={cn(
+                "flex flex-1 items-center gap-2 min-w-0 px-3 py-1.5 text-[12px] text-accent",
+                "bg-transparent border-0 hover:bg-bg-hover",
+              )}
+              onClick={() => setCreating(true)}
+              type="button"
+            >
+              <span className="grid place-items-center text-accent">
+                {I.plus}
+              </span>
+              <span className="truncate">Create new branch…</span>
+            </button>
+            <button
+              className={cn(
+                "grid w-8 place-items-center bg-transparent border-0 border-l border-bd-0",
+                "text-fg-2 cursor-pointer hover:bg-bg-hover hover:text-accent",
+                "disabled:cursor-default disabled:opacity-70",
+                "[&_svg]:w-3.5 [&_svg]:h-3.5 [&_[data-ai-spinner]]:w-3.5 [&_[data-ai-spinner]]:h-3.5",
+              )}
+              onClick={(e) => {
+                e.stopPropagation();
+                void gitSyncBranches();
+              }}
+              disabled={gitOpLoading != null}
+              title="Fetch remotes and fast-forward safe local branches"
+              aria-label="Sync branches"
+              type="button"
+            >
+              {gitOpLoading === "sync" ? <Spinner /> : I.refresh}
+            </button>
+          </div>
         )}
         {branchesLoading && branches.length === 0 ? (
           <div className="px-3.5 pt-3.5 pb-4 text-fg-2 text-[11.5px]">

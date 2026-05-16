@@ -44,24 +44,24 @@ export function NoRepoState({ onOpen }: Props) {
 
   return (
     <div className="h-full grid place-items-center p-[30px]">
-      <div className="w-[min(520px,92vw)] bg-bg-1 border border-bd-1 rounded-4 p-7 flex flex-col gap-[14px]">
+      <div className="w-[min(520px,92vw)] bg-bg-1 border border-bd-1 rounded-4 p-7 flex flex-col items-center gap-[14px] text-center">
         <div className="grid place-items-center h-[42px] w-[42px] rounded-[10px] bg-accent text-white [&_svg]:h-[18px] [&_svg]:w-[18px]">
           {I.folder}
         </div>
         <div className="text-[18px] font-semibold tracking-[-0.01em]">
           Open a Git repository to start reviewing
         </div>
-        <div className="font-mono text-fg-2 text-[12px] leading-[1.5]">
+        <div className="max-w-[380px] font-mono text-fg-2 text-[12px] leading-[1.5]">
           Point Squint at a local folder. We&apos;ll detect the current
           branch and surface every changed file.
         </div>
-        <div className="flex gap-2 pt-1">
+        <div className="flex justify-center gap-2 pt-1">
           <button className={BTN_PRIMARY} onClick={onOpen}>
             Open repository <Kbd>⌘O</Kbd>
           </button>
         </div>
         {recents.length > 0 ? (
-          <div className="flex flex-col gap-0.5 pt-[14px] mt-1.5 border-t border-bd-1">
+          <div className="w-full flex flex-col gap-0.5 pt-[14px] mt-1.5 border-t border-bd-1 text-left">
             <div className="font-mono text-fg-2 text-[10px] tracking-[0.1em] uppercase py-1">
               Recent
             </div>

@@ -98,7 +98,9 @@ export function TopBar() {
   const gitMenuOpen = useRepoStore((s) => s.gitMenuOpen);
   const setGitMenuOpen = useRepoStore((s) => s.setGitMenuOpen);
   const aiKind = useRepoStore((s) => s.aiKind);
+  const prBranchChoiceOpen = useRepoStore((s) => s.prBranchChoiceOpen);
   const openPrBranchChoice = useRepoStore((s) => s.openPrBranchChoice);
+  const closePrBranchChoice = useRepoStore((s) => s.closePrBranchChoice);
 
   return (
     <header
@@ -188,7 +190,8 @@ export function TopBar() {
             menuOpen={gitMenuOpen}
             aiActive={aiKind != null}
             onCreatePr={() => {
-              openPrBranchChoice();
+              if (prBranchChoiceOpen) closePrBranchChoice();
+              else openPrBranchChoice();
               if (gitMenuOpen) setGitMenuOpen(false);
             }}
             onMenuToggle={() => setGitMenuOpen(!gitMenuOpen)}

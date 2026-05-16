@@ -31,8 +31,14 @@ export type Settings = {
   rightSidebarWidth: number;
   /** ID of the user's preferred external editor (e.g. "vscode", "zed"). */
   preferredEditor: string | null;
-  /** ID of the user's preferred AI CLI ("claude" or "codex"). */
+  /** ID of the user's preferred AI CLI ("codex" or "claude"). */
   preferredAiCli: string | null;
+  /**
+   * True after the old "first detected CLI" default has been migrated to
+   * Codex. Keeps a user's later manual Claude choice from being overwritten
+   * on every startup.
+   */
+  aiCliDefaultMigratedToCodex: boolean;
   /** Whether the first-run onboarding tour has been completed. */
   firstRunCompleted: boolean;
   /** UI font preset (one of the bundled presets or "custom"). */
@@ -82,7 +88,8 @@ const DEFAULT_SETTINGS: Settings = {
   leftSidebarWidth: 280,
   rightSidebarWidth: 296,
   preferredEditor: null,
-  preferredAiCli: null,
+  preferredAiCli: "codex",
+  aiCliDefaultMigratedToCodex: true,
   firstRunCompleted: false,
   uiFont: "inter",
   codeFont: "jetbrains",
@@ -239,7 +246,11 @@ export function readSettings(): Settings {
       preferredAiCli:
         typeof parsed.preferredAiCli === "string"
           ? parsed.preferredAiCli
-          : null,
+          : DEFAULT_SETTINGS.preferredAiCli,
+      aiCliDefaultMigratedToCodex:
+        typeof parsed.aiCliDefaultMigratedToCodex === "boolean"
+          ? parsed.aiCliDefaultMigratedToCodex
+          : false,
       firstRunCompleted:
         typeof parsed.firstRunCompleted === "boolean"
           ? parsed.firstRunCompleted

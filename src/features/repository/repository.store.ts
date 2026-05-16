@@ -727,8 +727,21 @@ async function buildPromptForKind(
         aiApi.getDiffForAi(repoPath, "branch"),
       ]);
       return prepend([
-        "Draft a pull-request description in Markdown for the changes below.",
-        "Use sections: ## Summary, ## Why, ## Test plan. Be specific and grounded in the diff.",
+        "Draft a pull-request TITLE and DESCRIPTION for the changes below.",
+        "",
+        "Output format (STRICT — no ``` fences around the whole output):",
+        "  Line 1: a single-line PR title — imperative sentence describing the",
+        "          change, under 72 chars, no leading '#', no quotes, no",
+        "          prefixes like 'Summary:' or 'PR:' or 'Title:'.",
+        "  Line 2: blank.",
+        "  Line 3+: PR body in Markdown with sections: ## Summary, ## Why, ## Test plan.",
+        "",
+        "Bad TITLES — these are section names, NEVER emit them as the title:",
+        "  'Summary', '## Summary', 'Description', 'Changes', 'Overview', 'Why'.",
+        "Good TITLES (examples):",
+        "  'Add base-branch picker to Create PR dialog'",
+        "  'Fix hover state bleeding across file rows'",
+        "  'Auto-sync remote on window focus'",
         "",
         "COMMITS:",
         log.trim() || "(no commit history available)",
@@ -2372,18 +2385,53 @@ export const useRepoStore = create<State>((set, get) => ({
         fail("AI returned an empty PR description.");
         return;
       }
-      // Split the AI output into title (first non-empty line) + body
-      // (everything after). Strips a leading `# ` if the AI gave it as
-      // an H1 — gh treats title as plain text.
+      // Split the AI output into title (first usable line) + body. The
+      // prompt asks for "title on line 1, blank, then ## Summary / ## Why
+      // / ## Test plan", but models still sometimes lead with a bare
+      // section heading like "## Summary". When that happens the
+      // historical parser would strip the `#` and ship a PR titled
+      // "Summary" — useless. Skip past anything that's obviously a
+      // section heading and find the first real sentence.
+      const SECTION_HEADERS = new Set([
+        "summary",
+        "description",
+        "changes",
+        "overview",
+        "why",
+        "what",
+        "test plan",
+        "test-plan",
+        "testing",
+        "details",
+        "context",
+        "background",
+        "motivation",
+      ]);
+      const isSectionHeading = (s: string): boolean => {
+        // Strip markdown heading markers AND any leading/trailing
+        // punctuation so "## Summary:" → "summary" before the check.
+        const stripped = s
+          .replace(/^#+\s*/, "")
+          .replace(/[:.\s]+$/g, "")
+          .trim()
+          .toLowerCase();
+        return SECTION_HEADERS.has(stripped);
+      };
       const lines = prRaw.split(/\r?\n/);
       let title = "";
       let bodyStart = 0;
       for (let i = 0; i < lines.length; i++) {
         const t = lines[i].trim();
         if (t.length === 0) continue;
+        if (isSectionHeading(t)) continue;
         title = t.replace(/^#+\s*/, "");
         bodyStart = i + 1;
         break;
+      }
+      // gh enforces title length but cuts off mid-word silently — clamp
+      // ourselves with an ellipsis so the user sees the truncation.
+      if (title.length > 100) {
+        title = title.slice(0, 97).trimEnd() + "…";
       }
       const body = lines.slice(bodyStart).join("\n").trim();
       if (!title) {

@@ -361,6 +361,120 @@ export function DiffPane() {
     setSearchIdx((i) => (i - 1 + matchCount) % matchCount);
   }
 
+  // ---------------------------------------------------------------------
+  // Memoized hunk action handlers + popover. MUST stay above the early
+  // returns below — moving them after `if (!file) return …` would change
+  // the hook count between renders (file null → file present) and trip
+  // React's Rules of Hooks. The internal guards make them safe when
+  // `file` is null.
+  // ---------------------------------------------------------------------
+  const hunkActionEnabled =
+    !!file &&
+    diffMode !== "edit" &&
+    !diff?.isBinary &&
+    file.status === "modified" &&
+    hunks.length > 0;
+  const reverseStage = file?.staged ?? false;
+
+  const hunkActions = useMemo(() => {
+    if (!hunkActionEnabled || !file) return null;
+    return {
+      primary: {
+        kind: (reverseStage ? "unstage" : "stage") as "stage" | "unstage",
+        label: reverseStage ? "Unstage hunk" : "Stage hunk",
+        onClick: (hunkIdx: number) => {
+          setPendingHunk((prev) =>
+            prev && prev.hunkIdx === hunkIdx
+              ? null
+              : { hunkIdx, busy: false },
+          );
+        },
+      },
+      // Revert only makes sense for working-tree hunks (unstaged file).
+      // For staged hunks the equivalent action is "unstage" which is
+      // already covered by the primary button.
+      revert: !reverseStage
+        ? {
+            label: "Revert hunk (discard from working tree)",
+            onClick: (hunkIdx: number) => {
+              const target = hunks[hunkIdx];
+              if (!target) return;
+              const patch = buildPatch(
+                file.path,
+                [target],
+                file.oldPath ?? undefined,
+              );
+              requestRevertHunk(patch, hunkIdx, file.path);
+            },
+          }
+        : undefined,
+    };
+  }, [
+    hunkActionEnabled,
+    reverseStage,
+    hunks,
+    file,
+    requestRevertHunk,
+  ]);
+
+  const popoverNode = useMemo(() => {
+    if (!hunkActionEnabled || !pendingHunk || !file) return null;
+    return (
+      <HunkStagePopover
+        hunkIdx={pendingHunk.hunkIdx}
+        filePath={file.path}
+        busy={pendingHunk.busy}
+        reverse={reverseStage}
+        onCancel={() => setPendingHunk(null)}
+        onStageOnly={async () => {
+          const target = hunks[pendingHunk.hunkIdx];
+          if (!target) return;
+          const patch = buildPatch(
+            file.path,
+            [target],
+            file.oldPath ?? undefined,
+          );
+          setPendingHunk({ ...pendingHunk, busy: true });
+          await applyHunkPatch(
+            patch,
+            reverseStage,
+            reverseStage
+              ? `Unstaged hunk #${pendingHunk.hunkIdx + 1}`
+              : `Staged hunk #${pendingHunk.hunkIdx + 1}`,
+          );
+          setPendingHunk(null);
+        }}
+        onStageAndCommit={async (message) => {
+          const target = hunks[pendingHunk.hunkIdx];
+          if (!target) return;
+          const patch = buildPatch(
+            file.path,
+            [target],
+            file.oldPath ?? undefined,
+          );
+          setPendingHunk({ ...pendingHunk, busy: true });
+          await applyHunkPatchAndCommit(
+            patch,
+            reverseStage,
+            message,
+            reverseStage
+              ? `Unstaged & committed`
+              : `Staged & committed`,
+          );
+          setPendingHunk(null);
+        }}
+      />
+    );
+  }, [
+    hunkActionEnabled,
+    pendingHunk,
+    file,
+    reverseStage,
+    hunks,
+    applyHunkPatch,
+    applyHunkPatchAndCommit,
+  ]);
+
   if (!repo) return null;
   if (isUnchangedView && selectedFilePath) {
     // Look up a changed entry for this path — prefer unstaged (working-tree
@@ -415,119 +529,9 @@ export function DiffPane() {
     editValue != null &&
     fileEditValue !== fileSavedValue;
 
-  const hunkActionEnabled =
-    diffMode !== "edit" &&
-    !diff?.isBinary &&
-    file.status === "modified" &&
-    hunks.length > 0;
-
-  const reverseStage = file.staged;
-  // Memoize hunkActions and popoverNode so their identities are stable
-  // across DiffPane re-renders. The diff body components below use
-  // `React.memo` — without stable props they'd still re-render whenever
-  // an unrelated piece of state (in-file search nonce, AI output, settings,
-  // etc.) churned the parent, which is exactly the hot path the user hits
-  // when holding ⌥↓.
-  const hunkActions = useMemo(() => {
-    if (!hunkActionEnabled) return null;
-    return {
-      primary: {
-        kind: (reverseStage ? "unstage" : "stage") as "stage" | "unstage",
-        label: reverseStage ? "Unstage hunk" : "Stage hunk",
-        onClick: (hunkIdx: number) => {
-          setPendingHunk((prev) =>
-            prev && prev.hunkIdx === hunkIdx
-              ? null
-              : { hunkIdx, busy: false },
-          );
-        },
-      },
-      // Revert only makes sense for working-tree hunks (unstaged file).
-      // For staged hunks the equivalent action is "unstage" which is
-      // already covered by the primary button.
-      revert: !reverseStage
-        ? {
-            label: "Revert hunk (discard from working tree)",
-            onClick: (hunkIdx: number) => {
-              const target = hunks[hunkIdx];
-              if (!target) return;
-              const patch = buildPatch(
-                file.path,
-                [target],
-                file.oldPath ?? undefined,
-              );
-              requestRevertHunk(patch, hunkIdx, file.path);
-            },
-          }
-        : undefined,
-    };
-  }, [
-    hunkActionEnabled,
-    reverseStage,
-    hunks,
-    file.path,
-    file.oldPath,
-    requestRevertHunk,
-  ]);
-
-  const popoverNode = useMemo(() => {
-    if (!hunkActionEnabled || !pendingHunk) return null;
-    return (
-      <HunkStagePopover
-        hunkIdx={pendingHunk.hunkIdx}
-        filePath={file.path}
-        busy={pendingHunk.busy}
-        reverse={reverseStage}
-        onCancel={() => setPendingHunk(null)}
-        onStageOnly={async () => {
-          const target = hunks[pendingHunk.hunkIdx];
-          if (!target) return;
-          const patch = buildPatch(
-            file.path,
-            [target],
-            file.oldPath ?? undefined,
-          );
-          setPendingHunk({ ...pendingHunk, busy: true });
-          await applyHunkPatch(
-            patch,
-            reverseStage,
-            reverseStage
-              ? `Unstaged hunk #${pendingHunk.hunkIdx + 1}`
-              : `Staged hunk #${pendingHunk.hunkIdx + 1}`,
-          );
-          setPendingHunk(null);
-        }}
-        onStageAndCommit={async (message) => {
-          const target = hunks[pendingHunk.hunkIdx];
-          if (!target) return;
-          const patch = buildPatch(
-            file.path,
-            [target],
-            file.oldPath ?? undefined,
-          );
-          setPendingHunk({ ...pendingHunk, busy: true });
-          await applyHunkPatchAndCommit(
-            patch,
-            reverseStage,
-            message,
-            reverseStage
-              ? `Unstaged & committed`
-              : `Staged & committed`,
-          );
-          setPendingHunk(null);
-        }}
-      />
-    );
-  }, [
-    hunkActionEnabled,
-    pendingHunk,
-    file.path,
-    file.oldPath,
-    reverseStage,
-    hunks,
-    applyHunkPatch,
-    applyHunkPatchAndCommit,
-  ]);
+  // `hunkActionEnabled`, `reverseStage`, `hunkActions`, `popoverNode` are
+  // declared above (before the early returns) to keep the hook call count
+  // stable. They're memoized there using the same dependency set.
 
   return (
     <main className={DIFFPANE_ROOT}>

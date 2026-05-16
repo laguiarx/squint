@@ -35,11 +35,11 @@ jobs:
       matrix:
         include:
           # macOS: two architectures — Apple Silicon (aarch64) ships on
-          # macos-14 (M1) and Intel (x86_64) on macos-13. The bundler
-          # produces `.dmg` + `.app.tar.gz` for each.
+          # macos-14 and Intel (x86_64) uses GitHub's current Intel label.
+          # The bundler produces `.dmg` + `.app.tar.gz` for each.
           - platform: macos-14
             args: --target aarch64-apple-darwin
-          - platform: macos-13
+          - platform: macos-15-intel
             args: --target x86_64-apple-darwin
           # Windows: a single x64 build. Tauri's bundler emits both an
           # NSIS installer (.exe) and an MSI by default. WebView2 is
@@ -62,7 +62,7 @@ jobs:
           # Adds the architecture-specific target for the matrix entries
           # that need it (macOS cross-arch). Windows/Linux use the host
           # default.
-          targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin' || matrix.platform == 'macos-13' && 'x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin' || matrix.platform == 'macos-15-intel' && 'x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2

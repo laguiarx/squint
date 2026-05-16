@@ -88,12 +88,45 @@ export function PrBranchChoiceDialog() {
 
   const [anchor, setAnchor] = useState<Anchor>({ top: 60, left: 16 });
 
+  // "Trunk" = the repo's default branch (main/master). The Rust
+  // `git_remote_branches` command sorts it first, so `bases[0]` is the
+  // authoritative default. We treat ONLY the default branch as trunk:
+  //   - On main → hide "Current branch" (you don't PR FROM main).
+  //   - On develop / release / etc → show "Current branch" so the user
+  //     can legitimately PR develop → main (GitFlow release flow).
+  //   - On a feature branch that's been pushed → also show "Current",
+  //     because it's where the user actually wants to PR from.
+  // Computed reactively because `bases` loads async after the dialog opens.
+  const defaultBase = prDialog.bases[0] ?? null;
+  const currentBranchIsTrunk =
+    !!repository?.currentBranch &&
+    !!defaultBase &&
+    repository.currentBranch === defaultBase;
+
+  // Auto-pick the right mode. Two-pass so the async bases load doesn't
+  // strand the user on a now-invalid choice:
+  //   1) On open: clear local state, take the best guess given current bases.
+  //   2) On bases-arrive: if the user is on a trunk branch, switch to "new".
+  // `userPickedMode` records explicit user intent so we never override a
+  // deliberate "I really do want current" click.
+  const userPickedMode = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    setMode("current");
+    if (!open) {
+      userPickedMode.current = false;
+      return;
+    }
     setNewName("");
     setBasePickerOpen(false);
   }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    if (userPickedMode.current) return;
+    setMode(currentBranchIsTrunk ? "new" : "current");
+  }, [open, currentBranchIsTrunk]);
+  const pickMode = (next: "current" | "new") => {
+    userPickedMode.current = true;
+    setMode(next);
+  };
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -213,24 +246,35 @@ export function PrBranchChoiceDialog() {
         <div className="flex gap-3">
           <div className={ROW_LABEL}>From</div>
           <div className="flex-1 flex flex-col gap-1.5">
-            <label className={choiceRow(mode === "current")}>
-              <input
-                type="radio"
-                name="pr-branch-mode"
-                checked={mode === "current"}
-                onChange={() => setMode("current")}
-              />
-              <span className="inline-flex items-baseline gap-2 text-[12px] text-fg-0">
-                Current branch
-                <span className="font-mono text-fg-2">{currentBranch}</span>
-              </span>
-            </label>
+            {currentBranchIsTrunk ? (
+              // On a trunk branch (main/develop/...): "Current branch"
+              // would be a self-PR — surface a 1-line hint instead of a
+              // disabled-looking radio.
+              <div className="px-3 py-2 text-[11.5px] text-fg-2 leading-[1.45]">
+                You're on{" "}
+                <span className="font-mono text-fg-1">{currentBranch}</span>
+                . Create a new branch to open a PR from.
+              </div>
+            ) : (
+              <label className={choiceRow(mode === "current")}>
+                <input
+                  type="radio"
+                  name="pr-branch-mode"
+                  checked={mode === "current"}
+                  onChange={() => pickMode("current")}
+                />
+                <span className="inline-flex items-baseline gap-2 text-[12px] text-fg-0">
+                  Current branch
+                  <span className="font-mono text-fg-2">{currentBranch}</span>
+                </span>
+              </label>
+            )}
             <label className={choiceRow(mode === "new")}>
               <input
                 type="radio"
                 name="pr-branch-mode"
                 checked={mode === "new"}
-                onChange={() => setMode("new")}
+                onChange={() => pickMode("new")}
               />
               <span className="inline-flex items-baseline gap-2 text-[12px] text-fg-0">
                 New branch from{" "}
@@ -323,27 +367,48 @@ export function PrBranchChoiceDialog() {
                   "[scrollbar-width:thin] [scrollbar-color:var(--bd-2)_transparent]",
                 )}
               >
-                {prDialog.bases.map((name) => (
-                  <button
-                    key={name}
-                    type="button"
-                    onClick={() => {
-                      setPrDialogBase(name);
-                      setBasePickerOpen(false);
-                    }}
-                    className={cn(
-                      "w-full flex items-center gap-2 px-3 py-1.5",
-                      "text-left text-[12px] font-mono bg-transparent border-0",
-                      "cursor-pointer hover:bg-bg-hover hover:text-fg-0",
-                      name === base ? "text-accent" : "text-fg-1",
-                    )}
-                  >
-                    <span className="w-3 inline-flex">
-                      {name === base ? I.check : null}
-                    </span>
-                    {name}
-                  </button>
-                ))}
+                {(() => {
+                  // Filter out the current branch when the PR ships from
+                  // it — you can't open a PR from a branch into itself.
+                  // In "new branch" mode every base is valid (the new
+                  // branch is created from current and could legitimately
+                  // target current as the merge base).
+                  const visible = prDialog.bases.filter(
+                    (name) => mode === "new" || name !== currentBranch,
+                  );
+                  if (visible.length === 0) {
+                    return (
+                      <div className="px-3 py-2 text-[11.5px] text-fg-3 italic">
+                        No other branches on origin
+                        {prDialog.bases.length > 0
+                          ? " — push a different branch first"
+                          : ""}
+                        .
+                      </div>
+                    );
+                  }
+                  return visible.map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => {
+                        setPrDialogBase(name);
+                        setBasePickerOpen(false);
+                      }}
+                      className={cn(
+                        "w-full flex items-center gap-2 px-3 py-1.5",
+                        "text-left text-[12px] font-mono bg-transparent border-0",
+                        "cursor-pointer hover:bg-bg-hover hover:text-fg-0",
+                        name === base ? "text-accent" : "text-fg-1",
+                      )}
+                    >
+                      <span className="w-3 inline-flex">
+                        {name === base ? I.check : null}
+                      </span>
+                      {name}
+                    </button>
+                  ));
+                })()}
               </div>
             ) : null}
           </div>

@@ -1355,23 +1355,38 @@ pub fn git_apply_patch(
     Ok(())
 }
 
-/// Return every file in the working tree the user is likely to care about —
-/// i.e. tracked + untracked-but-not-ignored. Backed by `git ls-files`, which
-/// already honours `.gitignore` (including `node_modules/`, build folders,
-/// etc.) so we don't have to reimplement that logic ourselves.
+/// Return every file in the working tree the user is likely to care about.
+///
+/// The main list is tracked + untracked-but-not-ignored. We also add a narrow
+/// set of ignored-but-editable config files (`.env*`, `.npmrc`, etc.) so the
+/// Files tab can open local configuration without exploding into
+/// `node_modules/`, `dist/`, and build target trees.
 #[tauri::command]
 pub fn list_repo_files(repo_path: String) -> AppResult<Vec<String>> {
     let repo = resolve_repo(&repo_path)?;
+    let mut out = git_ls_files(
+        &repo,
+        &["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    )?;
+    let ignored = git_ls_files(
+        &repo,
+        &["ls-files", "-z", "--others", "--ignored", "--exclude-standard"],
+    )?;
+    out.extend(
+        ignored
+            .into_iter()
+            .filter(|path| is_editable_ignored_file(path)),
+    );
+    out.sort_unstable();
+    out.dedup();
+    Ok(out)
+}
+
+fn git_ls_files(repo: &Path, args: &[&str]) -> AppResult<Vec<String>> {
     let output = std::process::Command::new("git")
         .arg("-C")
-        .arg(&repo)
-        .args([
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ])
+        .arg(repo)
+        .args(args)
         .output()
         .map_err(|e| AppError::Git(format!("failed to spawn git ls-files: {e}")))?;
     if !output.status.success() {
@@ -1382,15 +1397,40 @@ pub fn list_repo_files(repo_path: String) -> AppResult<Vec<String>> {
             stderr
         }));
     }
-    let raw = String::from_utf8_lossy(&output.stdout);
-    let mut out: Vec<String> = raw
+    Ok(String::from_utf8_lossy(&output.stdout)
         .split('\0')
         .filter(|s| !s.is_empty())
         .map(String::from)
-        .collect();
-    out.sort_unstable();
-    out.dedup();
-    Ok(out)
+        .collect())
+}
+
+fn is_editable_ignored_file(path: &str) -> bool {
+    const BLOCKED_PREFIXES: &[&str] = &[
+        ".cache/",
+        ".next/",
+        ".nuxt/",
+        ".parcel-cache/",
+        ".svelte-kit/",
+        ".turbo/",
+        ".vite/",
+        "build/",
+        "coverage/",
+        "dist/",
+        "node_modules/",
+        "out/",
+        "src-tauri/target/",
+        "target/",
+    ];
+    if BLOCKED_PREFIXES.iter().any(|prefix| path.starts_with(prefix)) {
+        return false;
+    }
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name == ".env"
+        || name.starts_with(".env.")
+        || matches!(
+            name,
+            ".npmrc" | ".yarnrc" | ".pypirc" | ".netrc" | ".tool-versions"
+        )
 }
 
 #[tauri::command]
@@ -1556,5 +1596,18 @@ mod tests {
             classify_branch_sync(&branch, "/repo"),
             BranchSyncDecision::Skip("checked out at /tmp/squint-main".into())
         );
+    }
+
+    #[test]
+    fn includes_editable_ignored_files_without_build_trees() {
+        assert!(is_editable_ignored_file(".env"));
+        assert!(is_editable_ignored_file(".env.local"));
+        assert!(is_editable_ignored_file("apps/web/.env.production"));
+        assert!(is_editable_ignored_file(".npmrc"));
+
+        assert!(!is_editable_ignored_file("node_modules/pkg/index.js"));
+        assert!(!is_editable_ignored_file("dist/index.html"));
+        assert!(!is_editable_ignored_file("src-tauri/target/debug/squint"));
+        assert!(!is_editable_ignored_file(".DS_Store"));
     }
 }

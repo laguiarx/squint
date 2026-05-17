@@ -176,6 +176,7 @@ function TerminalDrawerInner({
       // with whatever they picked in Preferences.)
       fontFamily: resolveMonoStack(),
       fontSize: 12 * uiZoom,
+      letterSpacing: 0,
       lineHeight: 1.2,
       cursorBlink: true,
       allowProposedApi: true,
@@ -198,6 +199,17 @@ function TerminalDrawerInner({
       try {
         // Fit before opening the PTY so the shell starts at the right size.
         fit.fit();
+        document.fonts?.ready
+          .then(() => {
+            if (disposed) return;
+            term.options.fontFamily = resolveMonoStack();
+            term.options.letterSpacing = 0;
+            fit.fit();
+            term.refresh(0, term.rows - 1);
+          })
+          .catch(() => {
+            /* font readiness is best-effort */
+          });
         const cols = term.cols;
         const rows = term.rows;
         const { id } = await termOpen(cols, rows, cwd);
@@ -302,9 +314,11 @@ function TerminalDrawerInner({
       term.options.theme = resolveXtermTheme();
       term.options.fontFamily = resolveMonoStack();
       term.options.fontSize = 12 * uiZoom;
+      term.options.letterSpacing = 0;
       // Force a re-measure: the font might be wider/narrower than before,
       // which would invalidate the current cols/rows.
       fitRef.current?.fit();
+      term.refresh(0, term.rows - 1);
     });
     return () => cancelAnimationFrame(handle);
   }, [themeId, customColors, codeFont, customCodeFont, uiZoom]);

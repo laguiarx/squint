@@ -431,6 +431,17 @@ textarea,
   -webkit-user-select: text;
 }
 
+/* xterm measures text as a fixed grid. Keep it isolated from the app shell's
+ * global text tweaks, otherwise glyphs/cursor can drift visually while the PTY
+ * receives the correct bytes. */
+.xterm,
+.xterm * {
+  letter-spacing: 0 !important;
+  font-feature-settings: normal !important;
+  font-variant-ligatures: none !important;
+  text-rendering: auto !important;
+}
+
 button {
   font: inherit;
   color: inherit;

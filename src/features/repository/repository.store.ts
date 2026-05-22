@@ -919,21 +919,35 @@ async function buildPromptForKind(
         aiApi.getDiffForAi(repoPath, "branch"),
       ]);
       return prependUserPrompt(userPrompt, [
-        "Draft a pull-request TITLE and DESCRIPTION for the changes below.",
+        "Draft a pull-request TITLE and DESCRIPTION for the actual changes below.",
+        "Write in Brazilian Portuguese.",
+        "Use only the commit list and diff as source material.",
+        "Do not copy task briefs, objective text, Figma notes, credentials, or acceptance-flow text if they appear in nearby context.",
         "",
         "Output format (STRICT — no ``` fences around the whole output):",
         "  Line 1: a single-line PR title — imperative sentence describing the",
         "          change, under 72 chars, no leading '#', no quotes, no",
         "          prefixes like 'Summary:' or 'PR:' or 'Title:'.",
         "  Line 2: blank.",
-        "  Line 3+: PR body in Markdown with sections: ## Summary, ## Why, ## Test plan.",
+        "  Line 3+: PR body in Markdown exactly with these sections:",
+        "",
+        "# Resumo de Desenvolvimento",
+        "",
+        "**O que foi feito:**",
+        "1. ...",
+        "",
+        "**Onde foi alterado (escopo técnico):**",
+        "1. ...",
+        "",
+        "**Riscos/impactos:**",
+        "1. ...",
         "",
         "Bad TITLES — these are section names, NEVER emit them as the title:",
-        "  'Summary', '## Summary', 'Description', 'Changes', 'Overview', 'Why'.",
+        "  'Summary', '## Summary', 'Resumo de Desenvolvimento', 'Description', 'Changes', 'Overview', 'Why'.",
         "Good TITLES (examples):",
-        "  'Add base-branch picker to Create PR dialog'",
-        "  'Fix hover state bleeding across file rows'",
-        "  'Auto-sync remote on window focus'",
+        "  'Adiciona seletor de branch base no Create PR'",
+        "  'Corrige hover em linhas de arquivos'",
+        "  'Sincroniza remoto ao focar a janela'",
         "",
         "COMMITS:",
         log.trim() || "(no commit history available)",
@@ -2999,11 +3013,11 @@ export const useRepoStore = create<State>((set, get) => ({
         return;
       }
       // Split the AI output into title (first usable line) + body. The
-      // prompt asks for "title on line 1, blank, then ## Summary / ## Why
-      // / ## Test plan", but models still sometimes lead with a bare
-      // section heading like "## Summary". When that happens the
+      // prompt asks for "title on line 1, blank, then the development
+      // summary template", but models still sometimes lead with a bare
+      // section heading like "# Resumo de Desenvolvimento". When that happens the
       // historical parser would strip the `#` and ship a PR titled
-      // "Summary" — useless. Skip past anything that's obviously a
+      // "Resumo de Desenvolvimento" — useless. Skip past anything that's obviously a
       // section heading and find the first real sentence.
       const SECTION_HEADERS = new Set([
         "summary",
@@ -3015,6 +3029,13 @@ export const useRepoStore = create<State>((set, get) => ({
         "test plan",
         "test-plan",
         "testing",
+        "resumo de desenvolvimento",
+        "o que foi feito",
+        "onde foi alterado",
+        "escopo técnico",
+        "escopo tecnico",
+        "riscos",
+        "riscos/impactos",
         "details",
         "context",
         "background",

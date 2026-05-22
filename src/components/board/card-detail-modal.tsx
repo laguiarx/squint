@@ -359,6 +359,11 @@ export function CardDetailModal({ onOpenReview, onApprove }: Props) {
     onOpenReview(abs);
   };
 
+  const openPr = () => {
+    if (!card.prUrl) return;
+    void openUrl(card.prUrl).catch(() => undefined);
+  };
+
   // Build the kebab items mode-aware so each column only surfaces the
   // secondary actions that apply there.
   const kebabItems: KebabItem[] = [];
@@ -459,6 +464,11 @@ export function CardDetailModal({ onOpenReview, onApprove }: Props) {
                 icon={approving ? <Spinner className="w-3 h-3" /> : null}
               >
                 {approving ? "Opening PR…" : "Approve → PR"}
+              </HeaderBtn>
+            ) : null}
+            {isDone && card.prUrl ? (
+              <HeaderBtn primary onClick={openPr}>
+                Open PR
               </HeaderBtn>
             ) : null}
             {running ? (
@@ -924,17 +934,30 @@ export function CardDetailModal({ onOpenReview, onApprove }: Props) {
                     />
                   ) : null}
                   {card.prUrl ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const url = card.prUrl;
-                        if (url) void openUrl(url).catch(() => undefined);
-                      }}
-                      className="text-[11px] text-accent hover:underline text-left truncate font-mono mt-1"
-                      title="Open PR in browser"
-                    >
-                      {card.prUrl}
-                    </button>
+                    <div className="mt-1 flex flex-col gap-1.5">
+                      {isDone ? (
+                        <button
+                          type="button"
+                          onClick={openPr}
+                          className={cn(
+                            "h-7 w-full inline-flex items-center justify-center rounded-[5px] px-2",
+                            "text-[11px] font-medium bg-accent text-white",
+                            "hover:brightness-110 active:brightness-95",
+                          )}
+                          title="Open PR in browser"
+                        >
+                          Open PR
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={openPr}
+                        className="text-[11px] text-accent hover:underline text-left truncate font-mono"
+                        title="Open PR in browser"
+                      >
+                        {card.prUrl}
+                      </button>
+                    </div>
                   ) : null}
                 </IslandSection>
               ) : null}

@@ -1,5 +1,6 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/spinner";
@@ -186,7 +187,25 @@ function CardTileVisual({
         {card.branchName ? (
           <span className="truncate">{card.branchName}</span>
         ) : null}
-        {card.prUrl ? <span className="text-accent">PR ↗</span> : null}
+        {card.prUrl ? (
+          card.columnId === "done" ? (
+            <button
+              type="button"
+              className="text-accent hover:underline"
+              title="Open PR in browser"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                const url = card.prUrl;
+                if (url) void openUrl(url).catch(() => undefined);
+              }}
+            >
+              Open PR ↗
+            </button>
+          ) : (
+            <span className="text-accent">PR ↗</span>
+          )
+        ) : null}
       </div>
     </div>
   );

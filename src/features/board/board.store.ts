@@ -12,6 +12,7 @@ import { create } from "zustand";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 
 import * as api from "./board.api";
+import * as aiApi from "@/features/ai/ai.api";
 import { invoke } from "@/lib/tauri";
 import { useRepoStore } from "@/features/repository/repository.store";
 import { notifyCardTransition } from "@/lib/notify";
@@ -75,6 +76,166 @@ function defaultWorktreePath(card: Card): string {
   return `.dispatch/worktrees/${shortId(card.id)}`;
 }
 
+const MAX_PR_DIFF_BYTES = 120_000;
+
+function truncatePrDiff(s: string): string {
+  return s.length > MAX_PR_DIFF_BYTES
+    ? s.slice(0, MAX_PR_DIFF_BYTES) +
+        `\n\n[...truncated ${s.length - MAX_PR_DIFF_BYTES} bytes]`
+    : s;
+}
+
+function stripOuterCodeFence(raw: string): string {
+  const lines = raw.split(/\r?\n/);
+  if (lines.length < 2) return raw;
+  const opener = lines[0].trim();
+  if (!/^```[a-zA-Z0-9_+-]*$/.test(opener)) return raw;
+  let lastIdx = lines.length - 1;
+  while (lastIdx > 0 && lines[lastIdx].trim() === "") lastIdx--;
+  if (lastIdx <= 0 || lines[lastIdx].trim() !== "```") return raw;
+  return lines.slice(1, lastIdx).join("\n");
+}
+
+function changedFilesFromDiff(diff: string): string[] {
+  const files = new Set<string>();
+  for (const line of diff.split(/\r?\n/)) {
+    const match = /^diff --git a\/(.+?) b\/(.+)$/.exec(line);
+    if (match) files.add(match[2]);
+  }
+  return [...files];
+}
+
+function buildDevelopmentPrPrompt(
+  log: string,
+  diff: string,
+  userPrompt: string,
+): string {
+  const trimmedUserPrompt = userPrompt.trim();
+  return [
+    ...(trimmedUserPrompt
+      ? ["USER INSTRUCTIONS:", trimmedUserPrompt, ""]
+      : []),
+    "Draft a pull-request title and body from the actual branch changes below.",
+    "Write in Brazilian Portuguese.",
+    "Use only the commit list and diff as source material.",
+    "Do not copy the original task title, task objective, Figma notes, credentials, or acceptance-flow text.",
+    "",
+    "Output format (strict, no surrounding Markdown fence):",
+    "Line 1: short PR title describing what changed, under 72 chars, no prefix.",
+    "Line 2: blank.",
+    "Line 3+: PR body exactly in this structure:",
+    "",
+    "# Resumo de Desenvolvimento",
+    "",
+    "**O que foi feito:**",
+    "1. ...",
+    "",
+    "**Onde foi alterado (escopo técnico):**",
+    "1. ...",
+    "",
+    "**Riscos/impactos:**",
+    "1. ...",
+    "",
+    "COMMITS:",
+    log.trim() || "(no commit history available)",
+    "",
+    "DIFF:",
+    truncatePrDiff(diff.trim() || "(no diff available)"),
+  ].join("\n");
+}
+
+function parseDevelopmentPrDraft(
+  raw: string,
+  fallbackTitle: string,
+  fallbackBody: string,
+): { title: string; body: string } {
+  const cleaned = stripOuterCodeFence(raw).trim();
+  if (!cleaned) return { title: fallbackTitle, body: fallbackBody };
+
+  const lines = cleaned.split(/\r?\n/);
+  let title = "";
+  let bodyStart = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (!t) continue;
+    if (/^#+\s*resumo de desenvolvimento\s*$/i.test(t)) {
+      break;
+    }
+    title = t
+      .replace(/^#+\s*/, "")
+      .replace(/^(title|titulo|título|pr):\s*/i, "")
+      .trim();
+    bodyStart = i + 1;
+    break;
+  }
+
+  let body = lines.slice(bodyStart).join("\n").trim();
+  const resumoIndex = body.search(/^#\s+Resumo de Desenvolvimento/im);
+  if (resumoIndex > 0) {
+    body = body.slice(resumoIndex).trim();
+  }
+
+  if (!title || /^resumo de desenvolvimento$/i.test(title)) {
+    title = fallbackTitle;
+  }
+  if (title.length > 100) {
+    title = title.slice(0, 97).trimEnd() + "...";
+  }
+  if (!body.includes("# Resumo de Desenvolvimento")) {
+    body = fallbackBody;
+  }
+
+  return { title, body };
+}
+
+function fallbackDevelopmentPrBody(diff: string, log: string): string {
+  const files = changedFilesFromDiff(diff);
+  const fileLines =
+    files.length > 0
+      ? files
+          .slice(0, 8)
+          .map((file, idx) => `${idx + 1}. \`${file}\``)
+          .join("\n")
+      : "1. Branch sem diff textual disponível para detalhar arquivos.";
+  const extraFiles =
+    files.length > 8
+      ? `\n${Math.min(files.length, 9)}. Mais ${files.length - 8} arquivo(s) alterado(s).`
+      : "";
+  const commitCount = log.trim()
+    ? log.trim().split(/\r?\n/).filter(Boolean).length
+    : 0;
+
+  return [
+    "# Resumo de Desenvolvimento",
+    "",
+    "**O que foi feito:**",
+    "1. Preparadas alterações da branch para revisão em pull request.",
+    commitCount > 0
+      ? `2. Consolidados ${commitCount} commit(s) com mudanças prontas para validação.`
+      : "2. Consolidado o estado atual da branch para validação.",
+    "",
+    "**Onde foi alterado (escopo técnico):**",
+    fileLines + extraFiles,
+    "",
+    "**Riscos/impactos:**",
+    "1. Revisar o diff antes do merge para confirmar o comportamento esperado.",
+    "2. Validar testes e fluxos afetados no repositório de destino.",
+  ].join("\n");
+}
+
+function closeTerminalTabsForWorktree(worktreeAbs: string): void {
+  queueMicrotask(() => {
+    const repoState = useRepoStore.getState();
+    const matching = repoState.terminalTabs.filter((tab) => {
+      if (!tab.cwd) return false;
+      return tab.cwd === worktreeAbs || tab.cwd.startsWith(`${worktreeAbs}/`);
+    });
+    for (const tab of matching) {
+      repoState.closeTerminalTab(tab.id);
+    }
+  });
+}
+
 type State = {
   /** All projects known to the app. Loaded once on boot. */
   projects: Project[];
@@ -104,6 +265,8 @@ type State = {
    * from `runningCardIds` so the UI can show the "pushing + opening PR"
    * spinner without confusing it with an active agent run. */
   approvingCardIds: Set<string>;
+  /** Card ids currently removing their worktree from disk. */
+  archivingCardIds: Set<string>;
   /** Card ids whose last setup-script attempt failed. Drained from
    *  drainQueue so we don't retry-forever, cleared when the card moves
    *  to a different column (user dragged to backlog to fix). Transient
@@ -472,6 +635,7 @@ export const useBoardStore = create<State>((set, get) => ({
   runsByCard: {},
   runningCardIds: new Set(),
   approvingCardIds: new Set(),
+  archivingCardIds: new Set(),
   setupFailedCardIds: new Set(),
   pendingFollowUpByCardId: {},
   attachmentsByCard: {},
@@ -831,12 +995,27 @@ export const useBoardStore = create<State>((set, get) => ({
       }
     }
 
-    // 2. Drop the card from the DB. The backend returns the worktree
-    //    path and branch name it had recorded so we can clean both in
-    //    step 4 (the DB row is gone after this call).
-    const { worktreePath, branchName } = await api.deleteCard(id);
+    // 2. Remove the worktree while the card metadata still exists. This
+    //    used to run fire-and-forget after deleting the DB row, which
+    //    made failures invisible and left orphaned worktrees on disk.
+    //    Close card-owned terminal tabs first so no PTY keeps the cwd
+    //    open while `git worktree remove --force` walks the directory.
+    if (project && card?.worktreePath) {
+      const worktreeAbs = card.worktreePath.startsWith("/")
+        ? card.worktreePath
+        : `${project.repoPath}/${card.worktreePath}`;
+      closeTerminalTabsForWorktree(worktreeAbs);
+      await api.worktreeRemove(
+        project.repoPath,
+        card.worktreePath,
+        card.branchName,
+      );
+    }
 
-    // 3. Remove from local state immediately so the UI updates.
+    // 3. Drop the card from the DB after disk cleanup succeeds.
+    await api.deleteCard(id);
+
+    // 4. Remove from local state immediately so the UI updates.
     set((s) => {
       const cards = { ...s.cards };
       delete cards[id];
@@ -852,21 +1031,6 @@ export const useBoardStore = create<State>((set, get) => ({
       if (s.selectedCardId === id) next.selectedCardId = null;
       return next as State;
     });
-
-    // 4. Fire-and-forget worktree + branch removal. The Rust command
-    //    runs on `spawn_blocking` so it doesn't hog the IPC thread,
-    //    and we deliberately don't await it here: the UI is already
-    //    updated and disk cleanup can take seconds (large node_modules,
-    //    .next, etc.). If it fails the branch ref survives and the
-    //    user can prune manually with `git worktree prune` / `git
-    //    branch -D`.
-    if (project && worktreePath) {
-      api
-        .worktreeRemove(project.repoPath, worktreePath, branchName)
-        .catch(() => {
-          /* ignored — non-fatal */
-        });
-    }
 
     // 5. Slot may have freed up — promote the next queued card.
     drainQueue(set, get);
@@ -961,22 +1125,7 @@ export const useBoardStore = create<State>((set, get) => ({
       const worktreeAbs = worktreeForCleanup.startsWith("/")
         ? worktreeForCleanup
         : `${projectForCleanup.repoPath}/${worktreeForCleanup}`;
-      queueMicrotask(() => {
-        const repoState = useRepoStore.getState();
-        const matching = repoState.terminalTabs.filter((tab) => {
-          if (!tab.cwd) return false;
-          // Match the worktree root AND any nested cwd (a `cd .dispatch/`
-          // launched from within still belongs to this card). We don't
-          // want to include sibling worktrees, so require the cwd to be
-          // exactly the path or path + "/".
-          return (
-            tab.cwd === worktreeAbs || tab.cwd.startsWith(`${worktreeAbs}/`)
-          );
-        });
-        for (const tab of matching) {
-          repoState.closeTerminalTab(tab.id);
-        }
-      });
+      closeTerminalTabsForWorktree(worktreeAbs);
     }
   },
 
@@ -1020,16 +1169,40 @@ export const useBoardStore = create<State>((set, get) => ({
 
       await api.gitPush(worktreeAbs, true);
 
-      const taskRef = card.taskNumber
-        ? `Task #${card.taskNumber}`
-        : `card ${card.id.slice(0, 8)}`;
-      const body =
-        (card.description || "").trim() +
-        `\n\n---\nOpened by Dispatch from ${taskRef}.`;
+      const [log, diff] = await Promise.all([
+        aiApi.getLogForAi(worktreeAbs, "branch").catch(() => ""),
+        aiApi.getDiffForAi(worktreeAbs, "branch").catch(() => ""),
+      ]);
+      const fallbackTitle = `Resumo de alterações da branch`;
+      const fallbackBody = fallbackDevelopmentPrBody(diff, log);
+      const repoPrPrompt =
+        useRepoStore.getState().settings.aiSystemPrompts.pr ?? "";
+      const cliCandidates = [
+        useRepoStore.getState().settings.preferredAiCli,
+        card.agent,
+      ].filter((id, idx, arr): id is string =>
+        Boolean(id) && arr.indexOf(id) === idx,
+      );
+      let draft = { title: fallbackTitle, body: fallbackBody };
+      for (const cliId of cliCandidates) {
+        try {
+          const raw = await aiApi.runAiCli(
+            cliId,
+            buildDevelopmentPrPrompt(log, diff, repoPrPrompt),
+            worktreeAbs,
+          );
+          draft = parseDevelopmentPrDraft(raw, fallbackTitle, fallbackBody);
+          break;
+        } catch {
+          // Fall through to the next available CLI and finally to the
+          // deterministic summary so approving a card can still open a PR.
+        }
+      }
+
       const prUrl = await api.ghPrCreate(
         worktreeAbs,
-        card.title,
-        body,
+        draft.title,
+        draft.body,
         card.baseBranch,
         card.branchName,
       );
@@ -1038,6 +1211,7 @@ export const useBoardStore = create<State>((set, get) => ({
       set((s) => ({ cards: { ...s.cards, [id]: updated } }));
       const moved = await api.moveCard(id, "done");
       relocateCard(set, updated, moved);
+      closeTerminalTabsForWorktree(worktreeAbs);
       return prUrl;
     } finally {
       set((s) => {
@@ -1052,13 +1226,30 @@ export const useBoardStore = create<State>((set, get) => ({
     const card = get().cards[id];
     const project = card ? get().projectsById[card.projectId] : null;
     if (!project || !card) return;
-    if (card.worktreePath) {
-      await api.worktreeRemove(project.repoPath, card.worktreePath).catch(() => {
-        /* worktree may already be gone; non-fatal */
+    set((s) => {
+      const next = new Set(s.archivingCardIds);
+      next.add(id);
+      return { archivingCardIds: next };
+    });
+    try {
+      if (card.worktreePath) {
+        const worktreeAbs = card.worktreePath.startsWith("/")
+          ? card.worktreePath
+          : `${project.repoPath}/${card.worktreePath}`;
+        closeTerminalTabsForWorktree(worktreeAbs);
+        await api.worktreeRemove(project.repoPath, card.worktreePath).catch(() => {
+          /* worktree may already be gone; non-fatal */
+        });
+      }
+      const cleared = await api.clearCardWorktree(id);
+      set((s) => ({ cards: { ...s.cards, [id]: cleared } }));
+    } finally {
+      set((s) => {
+        const next = new Set(s.archivingCardIds);
+        next.delete(id);
+        return { archivingCardIds: next };
       });
     }
-    const cleared = await api.clearCardWorktree(id);
-    set((s) => ({ cards: { ...s.cards, [id]: cleared } }));
   },
 
   selectCard(id) {
